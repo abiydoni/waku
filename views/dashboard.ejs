@@ -1,0 +1,1878 @@
+<!DOCTYPE html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
+    />
+    <title>WA Gateway Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <link
+      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css"
+      rel="stylesheet"
+    />
+    <style>
+      .gradient-bg {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      }
+      .card-hover {
+        transition: all 0.3s ease;
+      }
+      .card-hover:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+      }
+      .status-connected {
+        background: linear-gradient(135deg, #10b981, #059669);
+      }
+      .status-connecting {
+        background: linear-gradient(135deg, #f59e0b, #d97706);
+      }
+      .status-disconnected {
+        background: linear-gradient(135deg, #6b7280, #4b5563);
+      }
+      .code-block {
+        background: #1f2937;
+        color: #f9fafb;
+        border-radius: 0.5rem;
+        padding: 1rem;
+        font-family: "Courier New", monospace;
+        font-size: 0.875rem;
+        overflow-x: auto;
+      }
+
+      .code-block pre {
+        margin: 0;
+        padding: 0;
+        background: transparent;
+        border: none;
+        font-family: inherit;
+        font-size: inherit;
+        line-height: 1.6;
+        white-space: pre;
+        word-wrap: normal;
+        overflow-x: auto;
+      }
+
+      .code-block code {
+        display: block;
+        background: transparent;
+        border: none;
+        font-family: inherit;
+        font-size: inherit;
+        line-height: inherit;
+        white-space: pre;
+        word-wrap: normal;
+        overflow-x: auto;
+      }
+      .api-endpoint {
+        background: linear-gradient(135deg, #f3f4f6, #e5e7eb);
+        border-left: 4px solid #3b82f6;
+        padding: 1rem;
+        border-radius: 0.5rem;
+        margin: 0.5rem 0;
+      }
+
+      /* Smooth transitions for session updates */
+      .sessions-container {
+        transition: opacity 0.3s ease-in-out;
+      }
+
+      .session-card {
+        transition: all 0.3s ease-in-out;
+        transform: translateY(0);
+        opacity: 1;
+      }
+
+      .session-card.entering {
+        opacity: 0;
+        transform: translateY(10px);
+      }
+
+      .session-card.entered {
+        opacity: 1;
+        transform: translateY(0);
+      }
+
+      /* Subtle loading state */
+      .loading-state {
+        opacity: 0.8;
+        transition: opacity 0.2s ease-in-out;
+      }
+
+      /* Smooth status badge transitions */
+      .status-badge {
+        transition: all 0.2s ease-in-out;
+      }
+
+      /* Prevent layout shift during updates */
+      .sessions-list {
+        min-height: 200px;
+      }
+
+      /* Smooth pulse animation for live indicator */
+      @keyframes smoothPulse {
+        0%,
+        100% {
+          opacity: 1;
+          transform: scale(1);
+        }
+        50% {
+          opacity: 0.7;
+          transform: scale(1.1);
+        }
+      }
+
+      .live-indicator {
+        animation: smoothPulse 2s ease-in-out infinite;
+      }
+
+      /* Mobile Responsive Styles */
+      @media (max-width: 1024px) {
+        .container {
+          padding: 1rem;
+        }
+
+        .grid-cols-1.xl\\:grid-cols-3 {
+          grid-template-columns: 1fr;
+        }
+
+        .xl\\:col-span-1 {
+          grid-column: span 1;
+        }
+
+        .xl\\:col-span-2 {
+          grid-column: span 1;
+        }
+      }
+
+      @media (max-width: 768px) {
+        .container {
+          padding: 0.75rem;
+        }
+
+        .gradient-bg .container {
+          padding: 1rem;
+        }
+
+        .text-3xl {
+          font-size: 1.5rem;
+        }
+
+        .text-2xl {
+          font-size: 1.25rem;
+        }
+
+        .p-6 {
+          padding: 1rem;
+        }
+
+        .p-4 {
+          padding: 0.75rem;
+        }
+
+        .space-y-6 > * + * {
+          margin-top: 1rem;
+        }
+
+        .space-y-4 > * + * {
+          margin-top: 0.75rem;
+        }
+
+        .space-y-3 > * + * {
+          margin-top: 0.5rem;
+        }
+
+        /* Session cards mobile optimization */
+        .session-card {
+          padding: 0.75rem;
+        }
+
+        .session-card .flex {
+          flex-direction: column;
+          gap: 0.75rem;
+        }
+
+        .session-card .flex.space-x-2 {
+          flex-direction: row;
+          justify-content: center;
+          gap: 0.5rem;
+        }
+
+        .session-card .flex.space-x-2 button {
+          flex: 1;
+          min-width: 0;
+          padding: 0.5rem 0.75rem;
+          font-size: 0.75rem;
+        }
+
+        /* API documentation mobile */
+        .api-endpoint {
+          padding: 0.75rem;
+          margin: 0.25rem 0;
+        }
+
+        .code-block {
+          padding: 0.75rem;
+          font-size: 0.75rem;
+        }
+
+        /* Button adjustments */
+        .bg-gradient-to-r {
+          padding: 0.5rem 0.75rem;
+          font-size: 0.875rem;
+        }
+
+        /* Modal adjustments */
+        .max-w-md {
+          max-width: 90vw;
+          margin: 1rem;
+        }
+
+        .p-8 {
+          padding: 1.5rem;
+        }
+      }
+
+      @media (max-width: 480px) {
+        .container {
+          padding: 0.5rem;
+        }
+
+        .gradient-bg .container {
+          padding: 0.75rem;
+        }
+
+        .text-xl {
+          font-size: 1.125rem;
+        }
+
+        .text-lg {
+          font-size: 1rem;
+        }
+
+        .p-6 {
+          padding: 0.75rem;
+        }
+
+        .p-4 {
+          padding: 0.5rem;
+        }
+
+        /* Very small session cards */
+        .session-card {
+          padding: 0.5rem;
+        }
+
+        .session-card .flex.space-x-2 button {
+          padding: 0.375rem 0.5rem;
+          font-size: 0.6875rem;
+        }
+
+        .session-card .flex.space-x-2 button span {
+          display: none;
+        }
+
+        .session-card .flex.space-x-2 button i {
+          margin-right: 0;
+        }
+
+        /* Header adjustments */
+        .flex.items-center.justify-between {
+          flex-direction: column;
+          gap: 0.5rem;
+          text-align: center;
+        }
+
+        .flex.items-center.space-x-4 {
+          flex-direction: column;
+          gap: 0.5rem;
+        }
+
+        .flex.items-center.space-x-3 {
+          flex-direction: column;
+          gap: 0.5rem;
+        }
+
+        /* API documentation very small */
+        .api-endpoint {
+          padding: 0.5rem;
+        }
+
+        .code-block {
+          padding: 0.5rem;
+          font-size: 0.6875rem;
+        }
+
+        /* Modal very small */
+        .max-w-md {
+          max-width: 95vw;
+          margin: 0.5rem;
+        }
+
+        .p-8 {
+          padding: 1rem;
+        }
+      }
+
+      /* Touch-friendly buttons */
+      @media (hover: none) and (pointer: coarse) {
+        .btn-login:hover {
+          transform: none;
+        }
+
+        .card-hover:hover {
+          transform: none;
+        }
+
+        button {
+          min-height: 44px;
+          min-width: 44px;
+        }
+
+        .session-card .flex.space-x-2 button {
+          min-height: 36px;
+        }
+      }
+
+      /* Additional mobile optimizations */
+      @media (max-width: 768px) {
+        /* Ensure all text is readable */
+        body {
+          font-size: 14px;
+        }
+
+        /* Make sure buttons are touch-friendly */
+        button,
+        .btn,
+        input[type="button"],
+        input[type="submit"] {
+          min-height: 44px;
+          min-width: 44px;
+        }
+
+        /* Improve form elements */
+        input,
+        textarea,
+        select {
+          font-size: 16px; /* Prevent zoom on iOS */
+          padding: 12px;
+        }
+
+        /* Better spacing for mobile */
+        .space-y-6 > * + * {
+          margin-top: 1.5rem;
+        }
+
+        .space-y-4 > * + * {
+          margin-top: 1rem;
+        }
+
+        /* Improve modal on mobile */
+        .fixed.inset-0 {
+          padding: 1rem;
+        }
+
+        /* Better QR code display */
+        .w-64.h-64 {
+          width: 250px;
+          height: 250px;
+          max-width: 80vw;
+          max-height: 80vw;
+        }
+      }
+
+      /* Landscape mobile optimization */
+      @media (max-width: 768px) and (orientation: landscape) {
+        .container {
+          padding: 0.5rem;
+        }
+
+        .space-y-6 > * + * {
+          margin-top: 1rem;
+        }
+
+        .space-y-4 > * + * {
+          margin-top: 0.75rem;
+        }
+      }
+    </style>
+  </head>
+  <body class="bg-gradient-to-br from-gray-50 to-gray-100 min-h-screen">
+    <!-- Modern Header -->
+    <div class="gradient-bg shadow-lg">
+      <div class="container mx-auto px-6 py-6">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center space-x-4">
+            <div class="bg-white bg-opacity-20 p-4 rounded-2xl shadow-lg">
+              <i class="fas fa-mobile-alt text-white text-4xl"></i>
+            </div>
+            <div>
+              <h1
+                class="text-3xl font-bold text-white flex items-center space-x-2"
+              >
+                <span>WA Gateway</span>
+              </h1>
+              <p class="text-blue-100 text-sm flex items-center space-x-1">
+                <i class="fas fa-layer-group"></i>
+                <span>Multi-Session WhatsApp Bot Platform</span>
+              </p>
+            </div>
+          </div>
+          <div class="text-right">
+            <div class="text-white text-sm">Server Status</div>
+            <div class="text-green-300 font-semibold">🟢 Online</div>
+            <div class="mt-2 flex items-center justify-end space-x-2">
+              <div class="text-white text-xs">
+                <i class="fas fa-user-circle mr-1"></i>
+                <%= username || 'Admin' %>
+              </div>
+              <button
+                onclick="logout()"
+                class="bg-white bg-opacity-20 hover:bg-opacity-30 text-white px-2 py-1 rounded-lg transition-all duration-300 flex items-center space-x-1 text-xs"
+              >
+                <i class="fas fa-sign-out-alt"></i>
+                <span>Logout</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="container mx-auto p-6 -mt-4">
+      <!-- Main Content Grid -->
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 lg:gap-6">
+        <!-- Left Column: Session Management -->
+        <div class="lg:col-span-1 space-y-4 lg:space-y-6">
+          <!-- Add New Session -->
+          <div
+            class="bg-white rounded-2xl shadow-xl p-6 card-hover border border-gray-100"
+          >
+            <div class="flex items-center space-x-3 mb-4">
+              <div class="p-2 bg-green-100 rounded-lg">
+                <i class="fas fa-plus text-green-600"></i>
+              </div>
+              <h2 class="text-xl font-bold text-gray-800">Add New Session</h2>
+            </div>
+
+            <div class="space-y-3">
+              <div>
+                <label class="block text-sm font-semibold text-gray-700 mb-2"
+                  >Session ID</label
+                >
+                <input
+                  type="text"
+                  id="newSessionId"
+                  placeholder="Enter unique session name..."
+                  class="w-full p-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-300"
+                />
+              </div>
+              <button
+                onclick="connectSession()"
+                class="w-full bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white px-4 py-3 rounded-xl transition-all duration-300 flex items-center justify-center space-x-2 shadow-lg hover:shadow-xl font-semibold"
+              >
+                <i class="fas fa-qrcode"></i>
+                <span>Create Session</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Active Sessions -->
+          <div
+            class="bg-white rounded-2xl shadow-xl p-6 card-hover border border-gray-100"
+          >
+            <div class="flex items-center justify-between mb-4">
+              <div class="flex items-center space-x-3">
+                <div
+                  class="p-3 bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl shadow-lg"
+                >
+                  <i class="fas fa-users-cog text-white text-xl"></i>
+                </div>
+                <div>
+                  <h2
+                    class="text-xl font-bold text-gray-800 flex items-center space-x-2"
+                  >
+                    <span>Active Sessions</span>
+                  </h2>
+                  <p class="text-xs text-gray-500 flex items-center space-x-1">
+                    <span>Auto-refresh every 5 seconds</span>
+                  </p>
+                </div>
+              </div>
+              <div class="flex items-center space-x-2">
+                <div class="flex items-center space-x-1 text-xs text-green-600">
+                  <div
+                    class="w-2 h-2 bg-green-500 rounded-full live-indicator"
+                    id="liveIndicator"
+                  ></div>
+                  <span>Live</span>
+                </div>
+                <button
+                  onclick="refreshSessions()"
+                  class="bg-blue-50 hover:bg-blue-100 text-blue-600 px-3 py-2 rounded-lg transition-all duration-300 flex items-center space-x-2"
+                >
+                  <i class="fas fa-sync-alt"></i>
+                  <span class="text-sm">Refresh</span>
+                </button>
+              </div>
+            </div>
+
+            <div
+              id="debugInfo"
+              class="text-xs text-gray-500 mb-4 p-2 bg-gray-50 rounded-lg"
+            >
+              Loading sessions...
+            </div>
+
+            <div
+              id="sessionsList"
+              class="space-y-3 sessions-list sessions-container"
+            ></div>
+          </div>
+
+          <!-- Bot Control Overview -->
+          <div
+            class="bg-white rounded-2xl shadow-xl p-6 card-hover border border-gray-100"
+          >
+            <div class="flex items-center justify-between mb-4">
+              <div class="flex items-center space-x-3">
+                <div
+                  class="p-3 bg-gradient-to-br from-green-500 to-green-600 rounded-xl shadow-lg"
+                >
+                  <i class="fas fa-robot text-white text-xl"></i>
+                </div>
+                <div>
+                  <h2
+                    class="text-xl font-bold text-gray-800 flex items-center space-x-2"
+                  >
+                    <span>Bot Control</span>
+                  </h2>
+                  <p class="text-xs text-gray-500 flex items-center space-x-1">
+                    <span>Manage bot status for all sessions</span>
+                  </p>
+                </div>
+              </div>
+              <div class="flex items-center space-x-2">
+                <button
+                  onclick="enableAllBots()"
+                  class="bg-green-500 hover:bg-green-600 text-white px-3 py-2 rounded-lg transition-all duration-300 flex items-center space-x-2 text-xs font-medium"
+                >
+                  <i class="fas fa-play"></i>
+                  <span>Enable All</span>
+                </button>
+                <button
+                  onclick="disableAllBots()"
+                  class="bg-red-500 hover:bg-red-600 text-white px-3 py-2 rounded-lg transition-all duration-300 flex items-center space-x-2 text-xs font-medium"
+                >
+                  <i class="fas fa-pause"></i>
+                  <span>Disable All</span>
+                </button>
+              </div>
+            </div>
+
+            <div id="botControlList" class="space-y-3">
+              <div class="text-center py-4 text-gray-500">
+                <i class="fas fa-spinner fa-spin text-2xl mb-2"></i>
+                <p class="text-sm">Loading bot status...</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Right Column: Documentation -->
+        <div class="lg:col-span-2 space-y-4 lg:space-y-6">
+          <!-- API Documentation -->
+          <div
+            class="bg-white rounded-2xl shadow-xl p-6 card-hover border border-gray-100"
+          >
+            <div class="flex items-center space-x-3 mb-6">
+              <div
+                class="p-3 bg-gradient-to-br from-indigo-500 to-indigo-600 rounded-xl shadow-lg"
+              >
+                <i class="fas fa-code text-white text-xl"></i>
+              </div>
+              <div>
+                <h2
+                  class="text-2xl font-bold text-gray-800 flex items-center space-x-2"
+                >
+                  <i class="fas fa-book text-indigo-500"></i>
+                  <span>API Documentation</span>
+                </h2>
+                <p class="text-sm text-gray-500 flex items-center space-x-1">
+                  <i class="fas fa-link text-blue-500"></i>
+                  <span>Complete REST API reference for WA Gateway</span>
+                </p>
+              </div>
+            </div>
+
+            <div class="mb-4 p-3 bg-gray-50 rounded-lg">
+              <div class="text-sm font-semibold text-gray-700 mb-1">
+                Base URL:
+              </div>
+              <code id="baseUrl" class="text-blue-600 font-mono"
+                >Loading...</code
+              >
+            </div>
+
+            <div class="space-y-4">
+              <!-- Connect API -->
+              <div class="api-endpoint">
+                <div class="flex items-center space-x-2 mb-2">
+                  <span
+                    class="bg-green-500 text-white px-2 py-1 rounded text-xs font-bold"
+                    >POST</span
+                  >
+                  <code class="text-lg font-mono text-gray-800"
+                    >/api/connect</code
+                  >
+                </div>
+                <p class="text-gray-600 mb-3">
+                  Create or connect to a WhatsApp session
+                </p>
+
+                <div class="mb-3">
+                  <div class="flex items-center justify-between mb-1">
+                    <div class="text-sm font-semibold text-gray-700">
+                      Request Body:
+                    </div>
+                    <button
+                      onclick="copyCode(this)"
+                      class="copy-btn bg-gray-500 hover:bg-gray-600 text-white px-2 py-1 rounded text-xs transition-colors"
+                    >
+                      <i class="fas fa-copy mr-1"></i>Copy
+                    </button>
+                  </div>
+                  <div class="code-block">
+                    <pre><code>{
+  "sessionId": "your_session_name"
+}</code></pre>
+                  </div>
+                </div>
+
+                <div class="mb-3">
+                  <div class="flex items-center justify-between mb-1">
+                    <div class="text-sm font-semibold text-gray-700">
+                      Response:
+                    </div>
+                    <button
+                      onclick="copyCode(this)"
+                      class="copy-btn bg-gray-500 hover:bg-gray-600 text-white px-2 py-1 rounded text-xs transition-colors"
+                    >
+                      <i class="fas fa-copy mr-1"></i>Copy
+                    </button>
+                  </div>
+                  <div class="code-block">
+                    <pre><code>{
+  "success": true,
+  "status": "connecting",
+  "message": "Connection initiated successfully"
+}</code></pre>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Send Message API -->
+              <div class="api-endpoint">
+                <div class="flex items-center space-x-2 mb-2">
+                  <span
+                    class="bg-blue-500 text-white px-2 py-1 rounded text-xs font-bold"
+                    >POST</span
+                  >
+                  <code class="text-lg font-mono text-gray-800"
+                    >/api/sendMessage</code
+                  >
+                </div>
+                <p class="text-gray-600 mb-3">
+                  Send a message to WhatsApp number or group
+                </p>
+
+                <div class="mb-3">
+                  <div class="flex items-center justify-between mb-1">
+                    <div class="text-sm font-semibold text-gray-700">
+                      Request Body:
+                    </div>
+                    <button
+                      onclick="copyCode(this)"
+                      class="copy-btn bg-gray-500 hover:bg-gray-600 text-white px-2 py-1 rounded text-xs transition-colors"
+                    >
+                      <i class="fas fa-copy mr-1"></i>Copy
+                    </button>
+                  </div>
+                  <div class="code-block">
+                    <pre><code>{
+  "sessionId": "your_session_name",
+  "to": "6281234567890@s.whatsapp.net",
+  "message": "Hello World!",
+  "isGroup": false
+}</code></pre>
+                  </div>
+                </div>
+
+                <div class="mb-3">
+                  <div class="flex items-center justify-between mb-1">
+                    <div class="text-sm font-semibold text-gray-700">
+                      Response:
+                    </div>
+                    <button
+                      onclick="copyCode(this)"
+                      class="copy-btn bg-gray-500 hover:bg-gray-600 text-white px-2 py-1 rounded text-xs transition-colors"
+                    >
+                      <i class="fas fa-copy mr-1"></i>Copy
+                    </button>
+                  </div>
+                  <div class="code-block">
+                    <pre><code>{
+  "success": true,
+  "messageId": "3EB0C767D26A8B6C8A4A",
+  "message": "Message sent successfully"
+}</code></pre>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Get Sessions API -->
+              <div class="api-endpoint">
+                <div class="flex items-center space-x-2 mb-2">
+                  <span
+                    class="bg-purple-500 text-white px-2 py-1 rounded text-xs font-bold"
+                    >GET</span
+                  >
+                  <code class="text-lg font-mono text-gray-800"
+                    >/api/getSessions</code
+                  >
+                </div>
+                <p class="text-gray-600 mb-3">
+                  Get all active sessions and their groups
+                </p>
+
+                <div class="mb-3">
+                  <div class="flex items-center justify-between mb-1">
+                    <div class="text-sm font-semibold text-gray-700">
+                      Response:
+                    </div>
+                    <button
+                      onclick="copyCode(this)"
+                      class="copy-btn bg-gray-500 hover:bg-gray-600 text-white px-2 py-1 rounded text-xs transition-colors"
+                    >
+                      <i class="fas fa-copy mr-1"></i>Copy
+                    </button>
+                  </div>
+                  <div class="code-block">
+                    <pre><code>{
+  "sessions": [
+    {
+      "id": "session1",
+      "status": "connected",
+      "groups": [
+        {
+          "jid": "120363398680818900@g.us",
+          "name": "Group Name"
+        }
+      ]
+    }
+  ]
+}</code></pre>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Get QR API -->
+              <div class="api-endpoint">
+                <div class="flex items-center space-x-2 mb-2">
+                  <span
+                    class="bg-yellow-500 text-white px-2 py-1 rounded text-xs font-bold"
+                    >GET</span
+                  >
+                  <code class="text-lg font-mono text-gray-800"
+                    >/api/getQR/:sessionId</code
+                  >
+                </div>
+                <p class="text-gray-600 mb-3">
+                  Get QR code for session authentication
+                </p>
+
+                <div class="mb-3">
+                  <div class="flex items-center justify-between mb-1">
+                    <div class="text-sm font-semibold text-gray-700">
+                      Response:
+                    </div>
+                    <button
+                      onclick="copyCode(this)"
+                      class="copy-btn bg-gray-500 hover:bg-gray-600 text-white px-2 py-1 rounded text-xs transition-colors"
+                    >
+                      <i class="fas fa-copy mr-1"></i>Copy
+                    </button>
+                  </div>
+                  <div class="code-block">
+                    <pre><code>{
+  "qr": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA...",
+  "status": "connecting"
+}</code></pre>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Disconnect API -->
+              <div class="api-endpoint">
+                <div class="flex items-center space-x-2 mb-2">
+                  <span
+                    class="bg-red-500 text-white px-2 py-1 rounded text-xs font-bold"
+                    >POST</span
+                  >
+                  <code class="text-lg font-mono text-gray-800"
+                    >/api/disconnect</code
+                  >
+                </div>
+                <p class="text-gray-600 mb-3">Disconnect a WhatsApp session</p>
+
+                <div class="mb-3">
+                  <div class="flex items-center justify-between mb-1">
+                    <div class="text-sm font-semibold text-gray-700">
+                      Request Body:
+                    </div>
+                    <button
+                      onclick="copyCode(this)"
+                      class="copy-btn bg-gray-500 hover:bg-gray-600 text-white px-2 py-1 rounded text-xs transition-colors"
+                    >
+                      <i class="fas fa-copy mr-1"></i>Copy
+                    </button>
+                  </div>
+                  <div class="code-block">
+                    <pre><code>{
+  "sessionId": "your_session_name"
+}</code></pre>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Implementation Examples -->
+          <div
+            class="bg-white rounded-2xl shadow-xl p-6 card-hover border border-gray-100"
+          >
+            <div class="flex items-center space-x-3 mb-6">
+              <div class="p-3 bg-green-100 rounded-xl">
+                <i class="fas fa-laptop-code text-green-600 text-xl"></i>
+              </div>
+              <div>
+                <h2 class="text-2xl font-bold text-gray-800">
+                  Implementation Examples
+                </h2>
+                <p class="text-sm text-gray-500">
+                  Code examples for different programming languages
+                </p>
+              </div>
+            </div>
+
+            <div class="space-y-6">
+              <!-- Node.js Example -->
+              <div
+                class="bg-gradient-to-r from-gray-50 to-gray-100 rounded-xl p-4 border border-gray-200"
+              >
+                <div class="flex items-center justify-between mb-3">
+                  <div class="flex items-center space-x-2">
+                    <i class="fab fa-node-js text-green-600 text-xl"></i>
+                    <h3 class="font-bold text-gray-800">Node.js</h3>
+                  </div>
+                  <button
+                    onclick="copyCode(this)"
+                    class="copy-btn bg-gray-500 hover:bg-gray-600 text-white px-3 py-1 rounded text-sm transition-colors"
+                  >
+                    <i class="fas fa-copy mr-1"></i>Copy
+                  </button>
+                </div>
+                <div class="code-block">
+                  <pre><code>// Install: npm install axios
+const axios = require('axios');
+
+async function sendMessage(sessionId, to, message) {
+  try {
+    const response = await axios.post('BASE_URL/api/sendMessage', {
+      sessionId: sessionId,
+      to: to,
+      message: message,
+      isGroup: false
+    });
+    console.log('✅ Message sent:', response.data);
+  } catch (error) {
+    console.error('❌ Error:', error.response?.data || error.message);
+  }
+}
+
+// Example usage
+sendMessage('my_session', '6281234567890@s.whatsapp.net', 'Hello!');</code></pre>
+                </div>
+              </div>
+
+              <!-- Python Example -->
+              <div
+                class="bg-gradient-to-r from-gray-50 to-gray-100 rounded-xl p-4 border border-gray-200"
+              >
+                <div class="flex items-center justify-between mb-3">
+                  <div class="flex items-center space-x-2">
+                    <i class="fab fa-python text-blue-600 text-xl"></i>
+                    <h3 class="font-bold text-gray-800">Python</h3>
+                  </div>
+                  <button
+                    onclick="copyCode(this)"
+                    class="copy-btn bg-gray-500 hover:bg-gray-600 text-white px-3 py-1 rounded text-sm transition-colors"
+                  >
+                    <i class="fas fa-copy mr-1"></i>Copy
+                  </button>
+                </div>
+                <div class="code-block">
+                  <pre><code># Install: pip install requests
+import requests
+
+def send_message(session_id, to, message):
+    url = 'BASE_URL/api/sendMessage'
+    data = {
+        'sessionId': session_id,
+        'to': to,
+        'message': message,
+        'isGroup': False
+    }
+    try:
+        response = requests.post(url, json=data)
+        result = response.json()
+        print('✅ Message sent:', result)
+    except Exception as e:
+        print('❌ Error:', e)
+
+# Example usage
+send_message('my_session', '6281234567890@s.whatsapp.net', 'Hello!')</code></pre>
+                </div>
+              </div>
+
+              <!-- PHP Example -->
+              <div
+                class="bg-gradient-to-r from-gray-50 to-gray-100 rounded-xl p-4 border border-gray-200"
+              >
+                <div class="flex items-center justify-between mb-3">
+                  <div class="flex items-center space-x-2">
+                    <i class="fab fa-php text-purple-600 text-xl"></i>
+                    <h3 class="font-bold text-gray-800">PHP</h3>
+                  </div>
+                  <button
+                    onclick="copyCode(this)"
+                    class="copy-btn bg-gray-500 hover:bg-gray-600 text-white px-3 py-1 rounded text-sm transition-colors"
+                  >
+                    <i class="fas fa-copy mr-1"></i>Copy
+                  </button>
+                </div>
+                <div class="code-block">
+                  <pre><code>&lt;?php
+function sendMessage($sessionId, $to, $message) {
+    $url = 'BASE_URL/api/sendMessage';
+    $data = [
+        'sessionId' => $sessionId,
+        'to' => $to,
+        'message' => $message,
+        'isGroup' => false
+    ];
+    
+    $options = [
+        'http' => [
+            'header' => "Content-type: application/json\r\n",
+            'method' => 'POST',
+            'content' => json_encode($data)
+        ]
+    ];
+    
+    $context = stream_context_create($options);
+    $result = file_get_contents($url, false, $context);
+    
+    if ($result === FALSE) {
+        echo "❌ Error sending message";
+    } else {
+        echo "✅ Message sent: " . $result;
+    }
+}
+
+// Example usage
+sendMessage('my_session', '6281234567890@s.whatsapp.net', 'Hello!');
+?&gt;</code></pre>
+                </div>
+              </div>
+
+              <!-- JavaScript Example -->
+              <div
+                class="bg-gradient-to-r from-gray-50 to-gray-100 rounded-xl p-4 border border-gray-200"
+              >
+                <div class="flex items-center justify-between mb-3">
+                  <div class="flex items-center space-x-2">
+                    <i class="fab fa-js-square text-yellow-600 text-xl"></i>
+                    <h3 class="font-bold text-gray-800">JavaScript</h3>
+                  </div>
+                  <button
+                    onclick="copyCode(this)"
+                    class="copy-btn bg-gray-500 hover:bg-gray-600 text-white px-3 py-1 rounded text-sm transition-colors"
+                  >
+                    <i class="fas fa-copy mr-1"></i>Copy
+                  </button>
+                </div>
+                <div class="code-block">
+                  <pre><code>// Browser or Node.js (with fetch)
+async function sendMessage(sessionId, to, message) {
+  try {
+    const response = await fetch('BASE_URL/api/sendMessage', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        sessionId: sessionId,
+        to: to,
+        message: message,
+        isGroup: false
+      })
+    });
+    
+    const result = await response.json();
+    console.log('✅ Message sent:', result);
+  } catch (error) {
+    console.error('❌ Error:', error);
+  }
+}
+
+// Example usage
+sendMessage('my_session', '6281234567890@s.whatsapp.net', 'Hello!');</code></pre>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Features & Benefits -->
+          <div
+            class="bg-white rounded-2xl shadow-xl p-6 card-hover border border-gray-100"
+          >
+            <div class="flex items-center space-x-3 mb-6">
+              <div
+                class="p-3 bg-gradient-to-br from-yellow-500 to-orange-500 rounded-xl shadow-lg"
+              >
+                <i class="fas fa-star text-white text-xl"></i>
+              </div>
+              <div>
+                <h2
+                  class="text-2xl font-bold text-gray-800 flex items-center space-x-2"
+                >
+                  <i class="fas fa-gem text-yellow-500"></i>
+                  <span>Features & Benefits</span>
+                </h2>
+                <p class="text-sm text-gray-500 flex items-center space-x-1">
+                  <i class="fas fa-heart text-red-500"></i>
+                  <span>Why choose WA Gateway for your projects</span>
+                </p>
+              </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div class="flex items-start space-x-3">
+                <div class="p-2 bg-green-100 rounded-lg">
+                  <i class="fas fa-layer-group text-green-600"></i>
+                </div>
+                <div>
+                  <h3 class="font-semibold text-gray-800 mb-1">
+                    Multi-Session Support
+                  </h3>
+                  <p class="text-sm text-gray-600">
+                    Manage multiple WhatsApp accounts simultaneously
+                  </p>
+                </div>
+              </div>
+
+              <div class="flex items-start space-x-3">
+                <div class="p-2 bg-blue-100 rounded-lg">
+                  <i class="fas fa-robot text-blue-600"></i>
+                </div>
+                <div>
+                  <h3 class="font-semibold text-gray-800 mb-1">
+                    Auto-Reply Bot
+                  </h3>
+                  <p class="text-sm text-gray-600">
+                    Built-in intelligent auto-reply system
+                  </p>
+                </div>
+              </div>
+
+              <div class="flex items-start space-x-3">
+                <div class="p-2 bg-purple-100 rounded-lg">
+                  <i class="fas fa-code text-purple-600"></i>
+                </div>
+                <div>
+                  <h3 class="font-semibold text-gray-800 mb-1">REST API</h3>
+                  <p class="text-sm text-gray-600">
+                    Easy integration with any programming language
+                  </p>
+                </div>
+              </div>
+
+              <div class="flex items-start space-x-3">
+                <div class="p-2 bg-orange-100 rounded-lg">
+                  <i class="fas fa-shield-alt text-orange-600"></i>
+                </div>
+                <div>
+                  <h3 class="font-semibold text-gray-800 mb-1">
+                    Secure & Stable
+                  </h3>
+                  <p class="text-sm text-gray-600">
+                    Built on Baileys library with enterprise-grade security
+                  </p>
+                </div>
+              </div>
+
+              <div class="flex items-start space-x-3">
+                <div class="p-2 bg-red-100 rounded-lg">
+                  <i class="fas fa-users text-red-600"></i>
+                </div>
+                <div>
+                  <h3 class="font-semibold text-gray-800 mb-1">
+                    Group Management
+                  </h3>
+                  <p class="text-sm text-gray-600">
+                    Send messages to groups and manage group lists
+                  </p>
+                </div>
+              </div>
+
+              <div class="flex items-start space-x-3">
+                <div class="p-2 bg-indigo-100 rounded-lg">
+                  <i class="fas fa-chart-line text-indigo-600"></i>
+                </div>
+                <div>
+                  <h3 class="font-semibold text-gray-800 mb-1">
+                    Real-time Updates
+                  </h3>
+                  <p class="text-sm text-gray-600">
+                    Live status updates and message delivery tracking
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modern QR Modal -->
+    <div
+      id="qrModal"
+      class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
+      onclick="closeQRModal()"
+    >
+      <div
+        class="bg-white p-8 rounded-2xl shadow-2xl max-w-md w-full mx-4 text-center card-hover"
+        onclick="event.stopPropagation()"
+      >
+        <div class="flex items-center justify-center space-x-3 mb-6">
+          <div class="p-3 bg-blue-100 rounded-xl">
+            <i class="fas fa-qrcode text-blue-600 text-xl"></i>
+          </div>
+          <h2 class="text-2xl font-bold text-gray-800">Scan QR Code</h2>
+        </div>
+
+        <div id="qrContainer" class="mb-6">
+          <div
+            class="animate-spin rounded-full h-16 w-16 border-b-2 border-blue-500 mx-auto"
+          ></div>
+          <p class="mt-4 text-gray-600">Loading QR code...</p>
+        </div>
+
+        <div class="flex justify-center space-x-3">
+          <button
+            onclick="refreshQR()"
+            class="px-6 py-3 bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white rounded-xl transition-all duration-300 flex items-center space-x-2 shadow-lg hover:shadow-xl"
+          >
+            <i class="fas fa-sync-alt"></i>
+            <span>Refresh</span>
+          </button>
+          <button
+            onclick="closeQRModal()"
+            class="px-6 py-3 bg-gradient-to-r from-gray-400 to-gray-500 hover:from-gray-500 hover:to-gray-600 text-white rounded-xl transition-all duration-300 flex items-center space-x-2 shadow-lg hover:shadow-xl"
+          >
+            <i class="fas fa-times"></i>
+            <span>Close</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      let qrInterval;
+      let currentSessionId = null;
+
+      // Dynamic URL System:
+      // All code examples will automatically use the current domain
+      // No need to hardcode URLs - they update automatically
+
+      // Connect session baru
+      async function connectSession() {
+        const sessionId = document.getElementById("newSessionId").value.trim();
+        if (!sessionId) {
+          Swal.fire({
+            icon: "warning",
+            title: "Session ID kosong",
+            text: "Masukkan sessionId terlebih dahulu.",
+          });
+          return;
+        }
+
+        try {
+          const res = await fetch("/api/connect", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ sessionId }),
+          });
+
+          const data = await res.json();
+
+          if (data.error) {
+            Swal.fire({
+              icon: "error",
+              title: "Gagal memulai koneksi",
+              text: data.error,
+            });
+          } else {
+            Swal.fire({
+              icon: "success",
+              title: "Berhasil",
+              text: "Koneksi dimulai. Scan QR bila diminta.",
+            });
+            refreshSessions();
+          }
+        } catch (error) {
+          Swal.fire({
+            icon: "error",
+            title: "Network Error",
+            text: error.message,
+          });
+        }
+      }
+
+      // QR Functions
+      async function fetchQR(sessionId) {
+        try {
+          const res = await fetch(`/api/getQR/${sessionId}`);
+          const data = await res.json();
+          const container = document.getElementById("qrContainer");
+
+          if (data.error) {
+            container.innerHTML = `
+              <div class="text-center">
+                <div class="text-red-500 text-4xl mb-4">❌</div>
+                <p class="text-red-600 font-semibold">Session not found</p>
+                <p class="text-sm text-gray-600">${data.error}</p>
+              </div>
+            `;
+            return;
+          }
+
+          if (data.status === "connected") {
+            container.innerHTML = `
+              <div class="text-center">
+                <div class="text-green-500 text-4xl mb-4">✅</div>
+                <p class="text-green-600 font-semibold">Connected!</p>
+                <p class="text-sm text-gray-600">Session is now active</p>
+              </div>
+            `;
+            clearInterval(qrInterval);
+
+            // Show success notification
+            Swal.fire({
+              icon: "success",
+              title: "Connected!",
+              text: "WhatsApp session connected successfully!",
+              timer: 2000,
+              showConfirmButton: false,
+            });
+
+            // Close modal and refresh immediately
+            setTimeout(() => {
+              closeQRModal();
+              refreshSessions();
+            }, 1000);
+            return;
+          }
+
+          if (data.qr && data.qr.trim() !== "") {
+            container.innerHTML = `
+              <div class="text-center">
+                <img src="${data.qr}" class="mx-auto w-64 h-64 border-2 border-gray-300 rounded-lg mb-4" alt="QR Code"/>
+                <p class="text-sm text-gray-600">Scan this QR code with WhatsApp</p>
+                <p class="text-xs text-gray-500 mt-1">Status: ${data.status}</p>
+                <div class="mt-2">
+                  <div class="animate-pulse text-blue-500 text-xs">Waiting for scan...</div>
+                </div>
+              </div>
+            `;
+            // Continue polling for connection status - don't clear interval
+          } else {
+            container.innerHTML = `
+              <div class="text-center">
+                <div class="animate-spin rounded-full h-16 w-16 border-b-2 border-blue-500 mx-auto"></div>
+                <p class="mt-4 text-gray-600">Generating QR code...</p>
+                <p class="text-xs text-gray-500 mt-1">Status: ${
+                  data.status || "unknown"
+                }</p>
+              </div>
+            `;
+          }
+        } catch (error) {
+          console.error("QR fetch error:", error);
+          const container = document.getElementById("qrContainer");
+          container.innerHTML = `
+            <div class="text-center">
+              <div class="text-red-500 text-4xl mb-4">❌</div>
+              <p class="text-red-600 font-semibold">Network Error</p>
+              <p class="text-sm text-gray-600">${error.message}</p>
+            </div>
+          `;
+        }
+      }
+
+      function openQRModal(sessionId) {
+        currentSessionId = sessionId;
+        document.getElementById("qrModal").classList.remove("hidden");
+
+        const container = document.getElementById("qrContainer");
+        container.innerHTML = `
+          <div class="text-center">
+            <div class="animate-spin rounded-full h-16 w-16 border-b-2 border-blue-500 mx-auto"></div>
+            <p class="mt-4 text-gray-600">Initializing...</p>
+          </div>
+        `;
+
+        clearInterval(qrInterval);
+
+        fetch("/api/connect", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sessionId }),
+        })
+          .then(() => {
+            setTimeout(() => {
+              qrInterval = setInterval(() => {
+                fetchQR(sessionId);
+              }, 1000); // Poll every 1 second for faster response
+            }, 1000);
+          })
+          .catch((error) => {
+            console.error("Connection failed:", error);
+            container.innerHTML = `
+            <div class="text-center">
+              <div class="text-red-500 text-4xl mb-4">❌</div>
+              <p class="text-red-600 font-semibold">Connection Failed</p>
+              <p class="text-sm text-gray-600">${error.message}</p>
+            </div>
+          `;
+          });
+      }
+
+      function closeQRModal() {
+        document.getElementById("qrModal").classList.add("hidden");
+        clearInterval(qrInterval);
+        currentSessionId = null;
+      }
+
+      function refreshQR() {
+        if (!currentSessionId) return;
+        clearInterval(qrInterval);
+
+        const container = document.getElementById("qrContainer");
+        container.innerHTML = `
+          <div class="text-center">
+            <div class="animate-spin rounded-full h-16 w-16 border-b-2 border-blue-500 mx-auto"></div>
+            <p class="mt-4 text-gray-600">Refreshing...</p>
+          </div>
+        `;
+
+        fetch("/api/connect", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sessionId: currentSessionId }),
+        })
+          .then(() => {
+            setTimeout(() => {
+              qrInterval = setInterval(() => {
+                fetchQR(currentSessionId);
+              }, 1000); // Poll every 1 second for faster response
+            }, 1000);
+          })
+          .catch((error) => {
+            console.error("Refresh failed:", error);
+            container.innerHTML = `
+            <div class="text-center">
+              <div class="text-red-500 text-4xl mb-4">❌</div>
+              <p class="text-red-600 font-semibold">Refresh Failed</p>
+              <p class="text-sm text-gray-600">${error.message}</p>
+            </div>
+          `;
+          });
+      }
+
+      // Session management functions
+      async function disconnectSession(sessionId) {
+        const conf = await Swal.fire({
+          icon: "warning",
+          title: "Disconnect Session",
+          text: `Yakin disconnect session ${sessionId}?`,
+          showCancelButton: true,
+          confirmButtonText: "Disconnect",
+        });
+        if (!conf.isConfirmed) return;
+
+        const res = await fetch("/api/disconnect", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sessionId }),
+        });
+        const data = await res.json();
+
+        if (data.success) {
+          Swal.fire({ icon: "success", title: "Disconnected" });
+        } else {
+          Swal.fire({ icon: "error", title: "Error", text: data.error });
+        }
+        refreshSessions();
+      }
+
+      async function deleteSessionPermanently(sessionId) {
+        const conf = await Swal.fire({
+          icon: "warning",
+          title: "Delete Session Permanently",
+          html: `🗑️ Ini akan MENGHAPUS PERMANEN session <b>${sessionId}</b> dan SEMUA file-nya!<br><br>⚠️ Aksi ini tidak bisa dibatalkan!<br><br>Anda perlu scan QR code lagi untuk reconnect.<br><br>Anda yakin?`,
+          showCancelButton: true,
+          confirmButtonText: "Hapus Permanen",
+          confirmButtonColor: "#dc2626",
+        });
+        if (!conf.isConfirmed) return;
+
+        try {
+          const res = await fetch("/api/disconnectAndDelete", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ sessionId }),
+          });
+          const data = await res.json();
+
+          if (data.success) {
+            Swal.fire({
+              icon: "success",
+              title: "Session dihapus permanen!",
+              text: "Semua file telah dihapus.",
+            });
+            refreshSessions();
+          } else {
+            Swal.fire({
+              icon: "error",
+              title: "Gagal menghapus",
+              text: data.error,
+            });
+          }
+        } catch (error) {
+          Swal.fire({
+            icon: "error",
+            title: "Gagal menghapus",
+            text: error.message,
+          });
+        }
+      }
+
+      // Refresh session list with smooth updates
+      function refreshSessions() {
+        const debugInfo = document.getElementById("debugInfo");
+        const container = document.getElementById("sessionsList");
+
+        if (debugInfo) {
+          debugInfo.textContent = "Fetching sessions...";
+        }
+
+        // Add subtle loading indicator
+        if (container) {
+          container.classList.add("opacity-90");
+        }
+
+        return fetch("/api/getSessions")
+          .then((res) => res.json())
+          .then((data) => {
+            updateSessionsList(data.sessions, container, debugInfo);
+            updateLiveIndicator();
+          })
+          .catch((error) => {
+            console.error("Error loading sessions:", error);
+            if (debugInfo) {
+              debugInfo.textContent = "Error: " + error.message;
+            }
+            if (container) {
+              container.innerHTML = `
+                <div class="text-center py-8 text-red-500">
+                  <i class="fas fa-exclamation-triangle text-4xl mb-4"></i>
+                  <p class="text-sm">Failed to load sessions</p>
+                  <p class="text-xs text-gray-400 mt-1">Please check your connection</p>
+                </div>
+              `;
+              container.classList.remove("opacity-90");
+            }
+            throw error;
+          });
+      }
+
+      // Smooth session list update function
+      function updateSessionsList(sessions, container, debugInfo) {
+        if (!container) return;
+
+        // Get current session cards for comparison
+        const currentCards = Array.from(container.children);
+        const currentSessionIds = currentCards
+          .map((card) => {
+            const link = card.querySelector('a[href^="/session/"]');
+            return link ? link.href.split("/session/")[1] : null;
+          })
+          .filter(Boolean);
+
+        const newSessionIds = sessions.map((s) => s.id);
+
+        // Check if we need to update (only if sessions changed)
+        const sessionsChanged =
+          currentSessionIds.length !== newSessionIds.length ||
+          !currentSessionIds.every((id) => newSessionIds.includes(id)) ||
+          !newSessionIds.every((id) => currentSessionIds.includes(id));
+
+        if (!sessionsChanged) {
+          // Only update status badges and icons if sessions exist but status might have changed
+          currentCards.forEach((card, index) => {
+            const session = sessions.find(
+              (s) => currentSessionIds[index] === s.id
+            );
+            if (session) {
+              updateSessionCard(card, session);
+            }
+          });
+
+          if (debugInfo) {
+            debugInfo.textContent = `Found ${sessions.length} active session${
+              sessions.length !== 1 ? "s" : ""
+            }`;
+          }
+          container.classList.remove("opacity-90");
+          return;
+        }
+
+        // If sessions changed, do smooth transition
+        container.style.transition = "opacity 0.3s ease-in-out";
+        container.style.opacity = "0.7";
+
+        setTimeout(() => {
+          // Clear container
+          container.innerHTML = "";
+
+          if (sessions.length === 0) {
+            container.innerHTML = `
+                  <div class="text-center py-8 text-gray-500">
+                    <i class="fas fa-inbox text-4xl mb-4"></i>
+                    <p class="text-sm">No active sessions found</p>
+                    <p class="text-xs text-gray-400 mt-1">Create your first session to get started</p>
+                  </div>
+                `;
+            if (debugInfo) {
+              debugInfo.textContent = "No sessions found";
+            }
+          } else {
+            // Create new session cards with smooth animation
+            sessions.forEach((session, index) => {
+              const sessionCard = createSessionCard(session);
+              sessionCard.style.opacity = "0";
+              sessionCard.style.transform = "translateY(10px)";
+              sessionCard.style.transition =
+                "opacity 0.3s ease-in-out, transform 0.3s ease-in-out";
+
+              container.appendChild(sessionCard);
+
+              // Animate in with staggered delay using requestAnimationFrame for smoother animation
+              requestAnimationFrame(() => {
+                setTimeout(() => {
+                  sessionCard.style.opacity = "1";
+                  sessionCard.style.transform = "translateY(0)";
+                }, index * 50);
+              });
+            });
+
+            if (debugInfo) {
+              debugInfo.textContent = `Found ${sessions.length} active session${
+                sessions.length !== 1 ? "s" : ""
+              }`;
+            }
+          }
+
+          // Restore opacity
+          container.style.opacity = "1";
+          container.classList.remove("opacity-90");
+        }, 150);
+      }
+
+      // Create session card element
+      function createSessionCard(session) {
+        const sessionCard = document.createElement("div");
+        sessionCard.className =
+          "bg-gradient-to-r from-white to-gray-50 rounded-xl p-4 border border-gray-200 hover:shadow-lg transition-all duration-300 session-card";
+
+        const statusBadge = getStatusBadge(session.status);
+        const { sessionIcon, iconColor } = getSessionIcon(session.status);
+        const actionButtons = getActionButtons(session);
+
+        sessionCard.innerHTML = `
+          <div class="flex items-center justify-between">
+            <a href="/session/${session.id}" class="flex items-center flex-1 group">
+              <div class="p-2 bg-gradient-to-br ${iconColor} rounded-lg mr-3 group-hover:opacity-80 transition-all duration-300 shadow-md">
+                <i class="fas ${sessionIcon} text-white text-lg"></i>
+              </div>
+              <div class="flex-1">
+                <div class="font-semibold text-gray-900 group-hover:text-blue-600 transition-colors">${session.id}</div>
+                <div class="mt-1 status-badge">${statusBadge}</div>
+              </div>
+            </a>
+            <div class="flex space-x-2">
+              ${actionButtons}
+            </div>
+          </div>
+        `;
+
+        return sessionCard;
+      }
+
+      // Update existing session card
+      function updateSessionCard(card, session) {
+        const statusBadge = getStatusBadge(session.status);
+        const { sessionIcon, iconColor } = getSessionIcon(session.status);
+        const actionButtons = getActionButtons(session);
+
+        // Update only the parts that might have changed
+        const iconElement = card.querySelector(".p-2");
+        const statusElement = card.querySelector(".mt-1");
+        const actionContainer = card.querySelector(".flex.space-x-2");
+
+        if (iconElement) {
+          // Add smooth transition for icon update
+          iconElement.style.transition = "all 0.3s ease-in-out";
+          iconElement.className = `p-2 bg-gradient-to-br ${iconColor} rounded-lg mr-3 group-hover:opacity-80 transition-all duration-300 shadow-md`;
+          iconElement.innerHTML = `<i class="fas ${sessionIcon} text-white text-lg"></i>`;
+        }
+
+        if (statusElement) {
+          // Add smooth transition for status badge update
+          statusElement.style.transition = "all 0.2s ease-in-out";
+          statusElement.innerHTML = statusBadge;
+        }
+
+        if (actionContainer) {
+          actionContainer.innerHTML = actionButtons;
+        }
+      }
+
+      // Get status badge HTML
+      function getStatusBadge(status) {
+        if (status === "connected") {
+          return '<span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800"><i class="fas fa-check-circle mr-1"></i>Connected</span>';
+        } else {
+          return `<span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-800"><i class="fas fa-clock mr-1"></i>${
+            status || "Unknown"
+          }</span>`;
+        }
+      }
+
+      // Get session icon and color
+      function getSessionIcon(status) {
+        let sessionIcon = "fa-user-circle";
+        let iconColor = "from-blue-500 to-blue-600";
+
+        if (status === "connected") {
+          sessionIcon = "fa-check-circle";
+          iconColor = "from-green-500 to-green-600";
+        } else if (status === "connecting") {
+          sessionIcon = "fa-spinner fa-spin";
+          iconColor = "from-yellow-500 to-yellow-600";
+        } else if (status === "error") {
+          sessionIcon = "fa-exclamation-triangle";
+          iconColor = "from-red-500 to-red-600";
+        } else if (status === "disconnected") {
+          sessionIcon = "fa-times-circle";
+          iconColor = "from-gray-500 to-gray-600";
+        }
+
+        return { sessionIcon, iconColor };
+      }
+
+      // Get action buttons HTML
+      function getActionButtons(session) {
+        let actionButtons = "";
+
+        if (session.status !== "connected") {
+          actionButtons = `
+                  <button onclick="openQRModal('${session.id}')" class="bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white px-3 py-2 rounded-lg transition-all duration-300 flex items-center space-x-2 shadow-sm hover:shadow-md text-xs font-medium">
+                    <i class="fas fa-qrcode"></i>
+                    <span>Connect</span>
+                  </button>
+                `;
+        } else {
+          actionButtons = `
+                  <button onclick="disconnectSession('${session.id}')" class="bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white px-3 py-2 rounded-lg transition-all duration-300 flex items-center space-x-2 shadow-sm hover:shadow-md text-xs font-medium">
+                    <i class="fas fa-pause"></i>
+                    <span>Disconnect</span>
+                  </button>
+                `;
+        }
+
+        actionButtons += `
+                <button onclick="deleteSessionPermanently('${session.id}')" class="bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white px-3 py-2 rounded-lg transition-all duration-300 flex items-center space-x-2 shadow-sm hover:shadow-md text-xs font-medium">
+                  <i class="fas fa-trash-alt"></i>
+                  <span>Delete</span>
+                </button>
+              `;
+
+        return actionButtons;
+      }
+
+      // Update live indicator with smooth animation
+      function updateLiveIndicator() {
+        const indicator = document.getElementById("liveIndicator");
+        if (indicator) {
+          // Add a subtle flash effect
+          indicator.style.animation = "none";
+          indicator.offsetHeight; // Trigger reflow
+          indicator.style.animation =
+            "pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite";
+        }
+      }
+
+      // Copy code to clipboard
+      function copyCode(button) {
+        const codeBlock = button
+          .closest(".mb-3")
+          .querySelector(".code-block code");
+        const codeText = codeBlock.textContent;
+
+        navigator.clipboard
+          .writeText(codeText)
+          .then(() => {
+            // Change button text temporarily
+            const originalText = button.innerHTML;
+            button.innerHTML = '<i class="fas fa-check mr-1"></i>Copied!';
+            button.classList.remove("bg-gray-500", "hover:bg-gray-600");
+            button.classList.add("bg-green-500");
+
+            // Reset button after 2 seconds
+            setTimeout(() => {
+              button.innerHTML = originalText;
+              button.classList.remove("bg-green-500");
+              button.classList.add("bg-gray-500", "hover:bg-gray-600");
+            }, 2000);
+          })
+          .catch((err) => {
+            console.error("Failed to copy: ", err);
+            alert("Failed to copy to clipboard");
+          });
+      }
+
+      // Update base URL display and code examples
+      function updateBaseUrl() {
+        const baseUrl = window.location.origin;
+        const baseUrlElement = document.getElementById("baseUrl");
+        if (baseUrlElement) {
+          baseUrlElement.textContent = baseUrl;
+        }
+
+        // Update all code examples with current domain
+        const codeElements = document.querySelectorAll(".code-block code");
+        codeElements.forEach((code) => {
+          code.textContent = code.textContent.replace(/BASE_URL/g, baseUrl);
+        });
+      }
+
+      // Keyboard shortcuts
+      document.addEventListener("keydown", function (event) {
+        if (event.key === "Escape") {
+          const modal = document.getElementById("qrModal");
+          if (!modal.classList.contains("hidden")) {
+            closeQRModal();
+          }
+        }
+      });
+
+      // Initialize
+      refreshSessions();
+      updateBaseUrl();
+
+      // Auto-refresh dashboard every 8 seconds with debouncing
+      let refreshTimeout;
+      let isRefreshing = false;
+
+      function debouncedRefresh() {
+        if (isRefreshing) return;
+
+        clearTimeout(refreshTimeout);
+        refreshTimeout = setTimeout(() => {
+          if (!isRefreshing) {
+            isRefreshing = true;
+            refreshSessions().finally(() => {
+              isRefreshing = false;
+            });
+          }
+        }, 100);
+      }
+
+      // Auto-refresh every 8 seconds (reduced frequency for smoother experience)
+      setInterval(debouncedRefresh, 8000);
+
+      // Logout function
+      function logout() {
+        Swal.fire({
+          title: "Konfirmasi Logout",
+          text: "Apakah Anda yakin ingin keluar?",
+          icon: "question",
+          showCancelButton: true,
+          confirmButtonColor: "#d33",
+          cancelButtonColor: "#3085d6",
+          confirmButtonText: "Ya, Logout",
+          cancelButtonText: "Batal",
+        }).then((result) => {
+          if (result.isConfirmed) {
+            fetch("/api/logout", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+              },
+            })
+              .then((response) => response.json())
+              .then((data) => {
+                if (data.success) {
+                  Swal.fire({
+                    icon: "success",
+                    title: "Logout Berhasil",
+                    text: "Anda telah berhasil keluar",
+                    timer: 1500,
+                    showConfirmButton: false,
+                  }).then(() => {
+                    window.location.href = "/login";
+                  });
+                } else {
+                  throw new Error(data.message || "Logout gagal");
+                }
+              })
+              .catch((error) => {
+                console.error("Logout error:", error);
+                Swal.fire({
+                  icon: "error",
+                  title: "Error",
+                  text: error.message || "Terjadi kesalahan saat logout",
+                });
+              });
+          }
+        });
+      }
+    </script>
+  </body>
+</html>
