@@ -648,13 +648,17 @@ async function initSession(sessionId) {
     const sock = makeWASocket({
       version,
       auth: state,
-      // Enhanced configuration for better message handling
+      // Enhanced configuration for persistent connection
       generateHighQualityLinkPreview: true,
       markOnlineOnConnect: true,
       syncFullHistory: false,
-      // Better error handling for decryption
-      retryRequestDelayMs: 2000,
-      maxMsgRetryCount: 3,
+      // Aggressive connection settings
+      retryRequestDelayMs: 1000,
+      maxMsgRetryCount: 5,
+      connectTimeoutMs: 60000,
+      keepAliveIntervalMs: 30000,
+      // Always online settings
+      defaultQueryTimeoutMs: 60000,
       logger: {
         level: "silent",
         child() {
@@ -742,6 +746,10 @@ async function initSession(sessionId) {
         if (!sessions[sessionId] || sessions[sessionId].deleted) return;
         sessions[sessionId].status = "connected";
         sessions[sessionId].qr = null; // Clear QR after connection
+        sessions[sessionId].reconnectAttempts = 0; // Reset reconnect attempts
+        sessions[sessionId].heartbeatFailures = 0; // Reset heartbeat failures
+        sessions[sessionId].lastHeartbeat = Date.now(); // Set initial heartbeat time
+
         try {
           const groups = await sock.groupFetchAllParticipating();
           if (!sessions[sessionId] || sessions[sessionId].deleted) return;
@@ -753,7 +761,9 @@ async function initSession(sessionId) {
           console.error(`❌ Failed to fetch groups for ${sessionId}:`, err);
           if (sessions[sessionId]) sessions[sessionId].groups = [];
         }
-        console.log(`✅ Session ${sessionId} connected successfully`);
+        console.log(
+          `✅ Session ${sessionId} connected successfully - Always Connected Mode Active`
+        );
       }
 
       if (connection === "close") {
@@ -766,49 +776,46 @@ async function initSession(sessionId) {
         const disconnectCode = lastDisconnect?.error?.output?.statusCode;
         console.log(`📊 Disconnect reason for ${sessionId}:`, disconnectCode);
 
-        // Only auto-reconnect for certain disconnect reasons and limit attempts
-        if (
-          disconnectCode !== DisconnectReason.loggedOut &&
-          disconnectCode !== DisconnectReason.badSession &&
-          disconnectCode !== DisconnectReason.multideviceMismatch
-        ) {
+        // Always attempt to reconnect for any disconnect reason (except logged out)
+        if (disconnectCode !== DisconnectReason.loggedOut) {
           // Add a flag to prevent multiple reconnection attempts
           if (sessions[sessionId] && !sessions[sessionId].reconnecting) {
             sessions[sessionId].reconnecting = true;
             sessions[sessionId].reconnectAttempts =
               (sessions[sessionId].reconnectAttempts || 0) + 1;
 
-            // Limit reconnection attempts to prevent infinite loops
-            if (sessions[sessionId].reconnectAttempts <= 3) {
-              console.log(
-                `🔄 Attempting to reconnect session ${sessionId} (attempt ${sessions[sessionId].reconnectAttempts}/3) in 15 seconds...`
-              );
-              setTimeout(() => {
-                if (
-                  sessions[sessionId] &&
-                  !sessions[sessionId].deleted &&
-                  sessions[sessionId].status === "disconnected"
-                ) {
+            // Unlimited reconnection attempts with exponential backoff
+            const delay = Math.min(
+              5000 * Math.pow(1.5, sessions[sessionId].reconnectAttempts - 1),
+              60000
+            ); // Max 60 seconds
+
+            console.log(
+              `🔄 Attempting to reconnect session ${sessionId} (attempt ${
+                sessions[sessionId].reconnectAttempts
+              }) in ${delay / 1000} seconds...`
+            );
+
+            setTimeout(() => {
+              if (
+                sessions[sessionId] &&
+                !sessions[sessionId].deleted &&
+                sessions[sessionId].status === "disconnected"
+              ) {
+                sessions[sessionId].reconnecting = false;
+                initSession(sessionId).catch((err) => {
+                  console.error(
+                    `❌ Reconnection failed for ${sessionId}:`,
+                    err
+                  );
                   sessions[sessionId].reconnecting = false;
-                  initSession(sessionId).catch((err) => {
-                    console.error(
-                      `❌ Reconnection failed for ${sessionId}:`,
-                      err
-                    );
-                    sessions[sessionId].reconnecting = false;
-                  });
-                }
-              }, 15000); // Increased delay to 15 seconds
-            } else {
-              console.log(
-                `🚫 Max reconnection attempts reached for ${sessionId}. Stopping auto-reconnect.`
-              );
-              sessions[sessionId].reconnecting = false;
-            }
+                });
+              }
+            }, delay);
           }
         } else {
           console.log(
-            `🚫 Not auto-reconnecting ${sessionId} due to disconnect reason: ${disconnectCode}`
+            `🚫 Session ${sessionId} logged out, manual reconnection required`
           );
           sessions[sessionId].reconnecting = false;
         }
@@ -1110,7 +1117,7 @@ async function initSession(sessionId) {
       }
     });
 
-    // Add heartbeat to keep connection alive
+    // Add aggressive heartbeat to keep connection alive
     const heartbeatInterval = setInterval(async () => {
       if (
         sessions[sessionId] &&
@@ -1118,18 +1125,36 @@ async function initSession(sessionId) {
         sock
       ) {
         try {
-          // Send a ping to keep connection alive
+          // Send multiple keep-alive signals
           await sock.presenceSubscribe(sessionId + "@s.whatsapp.net");
+
+          // Send a ping to keep connection alive
+          await sock.sendPresenceUpdate("available");
+
+          // Update last heartbeat time
+          sessions[sessionId].lastHeartbeat = Date.now();
+
+          console.log(`💓 Heartbeat sent for ${sessionId}`);
         } catch (err) {
           console.log(`💓 Heartbeat failed for ${sessionId}:`, err.message);
-          // If heartbeat fails, mark as disconnected
-          sessions[sessionId].status = "disconnected";
-          clearInterval(heartbeatInterval);
+
+          // If heartbeat fails multiple times, mark as disconnected
+          sessions[sessionId].heartbeatFailures =
+            (sessions[sessionId].heartbeatFailures || 0) + 1;
+
+          if (sessions[sessionId].heartbeatFailures >= 3) {
+            console.log(
+              `💔 Multiple heartbeat failures for ${sessionId}, marking as disconnected`
+            );
+            sessions[sessionId].status = "disconnected";
+            sessions[sessionId].heartbeatFailures = 0;
+            clearInterval(heartbeatInterval);
+          }
         }
       } else {
         clearInterval(heartbeatInterval);
       }
-    }, 30000); // Every 30 seconds
+    }, 15000); // Every 15 seconds
   } catch (err) {
     console.error(`❌ Failed to initialize session ${sessionId}:`, err);
     sessions[sessionId].status = "error";
@@ -1877,7 +1902,7 @@ app.use((err, req, res, next) => {
   });
 });
 
-// Auto-recovery mechanism for disconnected sessions
+// Aggressive auto-recovery mechanism for disconnected sessions
 setInterval(() => {
   Object.keys(sessions).forEach((sessionId) => {
     const session = sessions[sessionId];
@@ -1887,14 +1912,17 @@ setInterval(() => {
       session &&
       session.status === "disconnected" &&
       !session.deleted &&
-      !session.reconnecting &&
-      (session.reconnectAttempts || 0) < 5
+      !session.reconnecting
     ) {
-      // Max 5 auto-recovery attempts
-
+      // Unlimited auto-recovery attempts
       console.log(`🔄 Auto-recovery: Attempting to reconnect ${sessionId}`);
       session.reconnecting = true;
       session.reconnectAttempts = (session.reconnectAttempts || 0) + 1;
+
+      // Exponential backoff with jitter
+      const baseDelay = 5000;
+      const jitter = Math.random() * 2000; // 0-2 seconds random
+      const delay = Math.min(baseDelay + jitter, 30000); // Max 30 seconds
 
       setTimeout(() => {
         if (sessions[sessionId] && !sessions[sessionId].deleted) {
@@ -1903,10 +1931,44 @@ setInterval(() => {
             sessions[sessionId].reconnecting = false;
           });
         }
-      }, 10000); // Wait 10 seconds before attempting
+      }, delay);
     }
   });
-}, 60000); // Check every minute
+}, 30000); // Check every 30 seconds
+
+// Connection monitoring and health check
+setInterval(() => {
+  Object.keys(sessions).forEach((sessionId) => {
+    const session = sessions[sessionId];
+
+    if (session && session.status === "connected") {
+      const now = Date.now();
+      const lastHeartbeat = session.lastHeartbeat || 0;
+      const timeSinceHeartbeat = now - lastHeartbeat;
+
+      // If no heartbeat for more than 2 minutes, consider disconnected
+      if (timeSinceHeartbeat > 120000) {
+        // 2 minutes
+        console.log(
+          `💔 No heartbeat detected for ${sessionId} for ${Math.round(
+            timeSinceHeartbeat / 1000
+          )}s, marking as disconnected`
+        );
+        session.status = "disconnected";
+      }
+
+      // Log connection health
+      if (timeSinceHeartbeat > 60000) {
+        // 1 minute
+        console.log(
+          `⚠️ Session ${sessionId} health warning: No heartbeat for ${Math.round(
+            timeSinceHeartbeat / 1000
+          )}s`
+        );
+      }
+    }
+  });
+}, 30000); // Check every 30 seconds
 
 // Graceful shutdown
 process.on("SIGTERM", () => {
@@ -1968,6 +2030,10 @@ setInterval(() => {
 console.log("🤖 Bot Handler initialized and integrated");
 console.log("🔧 Enhanced message decryption handling enabled");
 console.log("🛡️ PreKey error recovery mechanisms active");
+console.log("🔄 Always Connected Mode: ENABLED");
+console.log("💓 Aggressive Heartbeat: Every 15 seconds");
+console.log("🔄 Unlimited Auto-Recovery: ENABLED");
+console.log("📊 Connection Monitoring: Every 30 seconds");
 
 // Start server
 app
