@@ -178,6 +178,10 @@ class DatabaseHandler {
   // Method untuk mencari menu berdasarkan deskripsi
   async searchMenuByDescription(searchTerm) {
     try {
+      if (!this.connection) {
+        throw new Error("Database not connected");
+      }
+
       const [rows] = await this.connection.execute(
         `SELECT id, parent_id, keyword, description, url 
          FROM tb_botmenu 

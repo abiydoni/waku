@@ -9,10 +9,10 @@ export const databaseConfig = {
   database: "appsbeem_botwa", // Nama database Anda
   charset: "utf8mb4",
 
-  // Konfigurasi koneksi
-  connectionLimit: 10,
-  acquireTimeout: 60000,
-  timeout: 60000,
+  // Konfigurasi koneksi yang benar untuk mysql2
+  port: 3306,
+  connectTimeout: 60000,
+  multipleStatements: false,
 
   // Konfigurasi SSL (opsional)
   ssl: false,

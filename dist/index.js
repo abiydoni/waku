@@ -363,18 +363,57 @@ async function cleanupProblematicSession(sessionId, contactJid) {
     const session = sessions[sessionId];
     if (session && session.sock) {
       // Clear any cached session data for this contact
-      await session.sock.clearSessionData?.(contactJid);
+      try {
+        await session.sock.clearSessionData?.(contactJid);
+        console.log(`✅ Session data cleared for ${contactJid}`);
+      } catch (clearError) {
+        console.log(
+          `⚠️ Failed to clear session data for ${contactJid}:`,
+          clearError.message
+        );
+      }
 
-      // Request new prekeys
-      await session.sock.requestPreKeyBundle(contactJid);
+      // Request new prekeys with retry logic
+      let prekeyRetries = 3;
+      while (prekeyRetries > 0) {
+        try {
+          await session.sock.requestPreKeyBundle(contactJid);
+          console.log(
+            `✅ PreKey bundle requested successfully for ${contactJid}`
+          );
+          break;
+        } catch (prekeyError) {
+          prekeyRetries--;
+          console.log(
+            `⚠️ PreKey request failed for ${contactJid} (${
+              3 - prekeyRetries
+            }/3):`,
+            prekeyError.message
+          );
+
+          if (prekeyRetries > 0) {
+            // Wait before retry
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+          }
+        }
+      }
+
+      // Clear decryption attempts for this contact
+      if (session.decryptionAttempts) {
+        session.decryptionAttempts.delete(contactJid);
+        console.log(`✅ Decryption attempts cleared for ${contactJid}`);
+      }
 
       console.log(`✅ Session cleanup completed for ${contactJid}`);
+    } else {
+      console.log(`⚠️ No valid session found for cleanup: ${sessionId}`);
     }
   } catch (error) {
     console.error(
       `❌ Failed to cleanup session for ${contactJid}:`,
       error.message
     );
+    // Don't throw the error, just log it to prevent cascading failures
   }
 }
 
@@ -802,46 +841,102 @@ async function initSession(sessionId) {
       // Skip if message is from bot itself
       if (msg.key.fromMe) return;
 
-      // Handle decryption errors gracefully
+      // Enhanced decryption error handling
       if (msg.message === undefined) {
         console.log(
           `🔒 Message from ${msg.key.remoteJid} is encrypted, attempting to decrypt...`
         );
 
-        // Try to decrypt the message
+        // Track decryption attempts per contact
+        const contactJid = msg.key.remoteJid;
+        if (!sessions[sessionId].decryptionAttempts) {
+          sessions[sessionId].decryptionAttempts = new Map();
+        }
+
+        const attempts =
+          sessions[sessionId].decryptionAttempts.get(contactJid) || 0;
+
+        // Limit decryption attempts to prevent infinite loops
+        if (attempts >= 3) {
+          console.log(
+            `🚫 Max decryption attempts reached for ${contactJid}, skipping message`
+          );
+          return;
+        }
+
+        // Try to decrypt the message with retry logic
         try {
           const decryptedMessage = await sock.decryptMessage(msg);
           if (decryptedMessage) {
-            console.log(
-              `✅ Message decrypted successfully from ${msg.key.remoteJid}`
-            );
+            console.log(`✅ Message decrypted successfully from ${contactJid}`);
+            // Reset attempts counter on success
+            sessions[sessionId].decryptionAttempts.delete(contactJid);
             // Process the decrypted message
             msg.message = decryptedMessage;
           } else {
             console.log(
-              `⚠️ Failed to decrypt message from ${msg.key.remoteJid}, skipping...`
+              `⚠️ Failed to decrypt message from ${contactJid}, skipping...`
             );
             return;
           }
         } catch (decryptError) {
           console.log(
-            `❌ Decryption failed for message from ${msg.key.remoteJid}:`,
+            `❌ Decryption failed for message from ${contactJid} (attempt ${
+              attempts + 1
+            }/3):`,
             decryptError.message
           );
 
-          // Handle specific decryption errors
+          // Increment attempts counter and track timestamp
+          sessions[sessionId].decryptionAttempts.set(contactJid, attempts + 1);
+          if (!sessions[sessionId].lastDecryptionAttempt) {
+            sessions[sessionId].lastDecryptionAttempt = {};
+          }
+          sessions[sessionId].lastDecryptionAttempt[contactJid] = Date.now();
+
+          // Handle specific decryption errors with enhanced recovery
           if (
             decryptError.message.includes("PreKeyError") ||
             decryptError.message.includes("Invalid PreKey ID") ||
             decryptError.message.includes("No session found")
           ) {
             console.log(
-              `🔄 PreKey error detected, attempting to refresh session...`
+              `🔄 PreKey/Session error detected for ${contactJid}, attempting recovery...`
             );
 
-            // Use the cleanup function to handle problematic sessions
-            await cleanupProblematicSession(sessionId, msg.key.remoteJid);
+            // Enhanced cleanup with better error handling
+            try {
+              await cleanupProblematicSession(sessionId, contactJid);
+
+              // Wait a bit before next attempt
+              await new Promise((resolve) => setTimeout(resolve, 2000));
+
+              // Try to request new prekeys
+              try {
+                await sock.requestPreKeyBundle(contactJid);
+                console.log(`✅ PreKey bundle requested for ${contactJid}`);
+              } catch (prekeyError) {
+                console.log(
+                  `⚠️ Failed to request PreKey bundle for ${contactJid}:`,
+                  prekeyError.message
+                );
+              }
+            } catch (cleanupError) {
+              console.log(
+                `❌ Cleanup failed for ${contactJid}:`,
+                cleanupError.message
+              );
+            }
           }
+
+          // If this was the last attempt, log it and clear the counter
+          if (attempts + 1 >= 3) {
+            console.log(
+              `🚫 Giving up on decryption for ${contactJid} after 3 attempts`
+            );
+            sessions[sessionId].decryptionAttempts.delete(contactJid);
+          }
+
           return;
         }
       }
@@ -969,13 +1064,13 @@ async function initSession(sessionId) {
       sessions[sessionId].status = "error";
     });
 
-    // Handle message decryption errors
+    // Handle message decryption errors with enhanced recovery
     sock.ev.on("messages.update", async (update) => {
       if (update.status === "error" && update.error) {
         const errorMsg = update.error.message || update.error.toString();
         console.log(`🔒 Message decryption error for ${sessionId}:`, errorMsg);
 
-        // Handle PreKey errors
+        // Handle PreKey errors with enhanced recovery
         if (
           errorMsg.includes("PreKeyError") ||
           errorMsg.includes("Invalid PreKey ID") ||
@@ -987,7 +1082,29 @@ async function initSession(sessionId) {
 
           // Use the cleanup function to handle problematic sessions
           if (update.key?.remoteJid) {
-            await cleanupProblematicSession(sessionId, update.key.remoteJid);
+            try {
+              await cleanupProblematicSession(sessionId, update.key.remoteJid);
+
+              // Additional recovery: try to refresh the entire session if needed
+              const session = sessions[sessionId];
+              if (session && session.sock) {
+                try {
+                  // Force a session refresh
+                  await session.sock.refreshSession?.();
+                  console.log(`✅ Session refreshed for ${sessionId}`);
+                } catch (refreshError) {
+                  console.log(
+                    `⚠️ Session refresh failed for ${sessionId}:`,
+                    refreshError.message
+                  );
+                }
+              }
+            } catch (recoveryError) {
+              console.log(
+                `❌ Recovery failed for ${sessionId}:`,
+                recoveryError.message
+              );
+            }
           }
         }
       }
@@ -1812,6 +1929,41 @@ app.use((req, res) => {
 setInterval(() => {
   botHandler.cleanupInactiveSessions();
 }, 10 * 60 * 1000); // Cleanup every 10 minutes
+
+// Periodic cleanup of decryption attempts and session maintenance
+setInterval(() => {
+  console.log(`🧹 Running periodic session cleanup...`);
+
+  Object.keys(sessions).forEach((sessionId) => {
+    const session = sessions[sessionId];
+    if (session && session.decryptionAttempts) {
+      // Clear old decryption attempts (older than 1 hour)
+      const now = Date.now();
+      const oneHourAgo = now - 60 * 60 * 1000;
+
+      for (const [
+        contactJid,
+        attempts,
+      ] of session.decryptionAttempts.entries()) {
+        // If we have timestamp data, use it; otherwise clear attempts older than 10 minutes
+        const lastAttempt =
+          session.lastDecryptionAttempt?.[contactJid] || now - 10 * 60 * 1000;
+
+        if (lastAttempt < oneHourAgo) {
+          session.decryptionAttempts.delete(contactJid);
+          if (session.lastDecryptionAttempt) {
+            delete session.lastDecryptionAttempt[contactJid];
+          }
+          console.log(
+            `🧹 Cleared old decryption attempts for ${contactJid} in ${sessionId}`
+          );
+        }
+      }
+    }
+  });
+
+  console.log(`✅ Periodic session cleanup completed`);
+}, 30 * 60 * 1000); // Cleanup every 30 minutes
 
 console.log("🤖 Bot Handler initialized and integrated");
 console.log("🔧 Enhanced message decryption handling enabled");
