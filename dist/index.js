@@ -1,3 +1,5 @@
+console.log("🚀 Starting WA Gateway Server...");
+
 import express from "express";
 import path from "path";
 import fs from "fs";
@@ -9,10 +11,12 @@ import makeWASocket, {
 } from "@whiskeysockets/baileys";
 import axios from "axios";
 import { spawn } from "child_process";
-import DatabaseHandler from "./DatabaseHandler.js";
+import SQLiteDatabaseHandler from "./SQLiteDatabaseHandler.js";
+
+console.log("✅ All imports loaded successfully");
 
 const app = express();
-const PORT = process.env.PORT || 4004;
+const PORT = process.env.PORT || 4005;
 const HOST = process.env.HOST || "localhost";
 
 // Middleware
@@ -69,7 +73,8 @@ app.get("/login", (req, res) => {
   if (authToken === "wa-gateway-auth-2024") {
     return res.redirect("/dashboard");
   }
-  res.render("login");
+  const error = req.query.error || null;
+  res.render("login", { error });
 });
 
 app.post("/api/login", (req, res) => {
@@ -119,14 +124,37 @@ app.post("/api/logout", (req, res) => {
   res.json({ success: true, message: "Logout berhasil" });
 });
 
-// Health check endpoint
+// Enhanced health check endpoint
 app.get("/health", (req, res) => {
+  const sessionStatus = Object.keys(sessions).map((sessionId) => {
+    const session = sessions[sessionId];
+    return {
+      sessionId,
+      status: session?.status || "unknown",
+      isConnected: session?.status === "connected",
+      reconnectAttempts: session?.reconnectAttempts || 0,
+      lastHeartbeat: session?.lastHeartbeat || null,
+      heartbeatFailures: session?.heartbeatFailures || 0,
+      reconnecting: session?.reconnecting || false,
+    };
+  });
+
   res.json({
     status: "OK",
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
     memory: process.memoryUsage(),
-    sessions: Object.keys(sessions).length,
+    sessions: {
+      total: Object.keys(sessions).length,
+      connected: sessionStatus.filter((s) => s.isConnected).length,
+      disconnected: sessionStatus.filter((s) => s.status === "disconnected")
+        .length,
+      reconnecting: sessionStatus.filter((s) => s.reconnecting).length,
+      details: sessionStatus,
+    },
+    database: {
+      connected: botHandler.dbHandler.connection ? true : false,
+    },
   });
 });
 
@@ -172,7 +200,7 @@ const defaultBotConfigs = {
 // --- Bot Handler Class ---
 class BotHandler {
   constructor() {
-    this.dbHandler = new DatabaseHandler();
+    this.dbHandler = new SQLiteDatabaseHandler();
     this.userSessions = new Map(); // Menyimpan session user
     this.botEnabled = true; // Flag untuk enable/disable bot
 
@@ -183,7 +211,10 @@ class BotHandler {
   async initializeDatabase() {
     const connected = await this.dbHandler.connect();
     if (!connected) {
-      console.error("❌ Failed to connect to database");
+      console.error("❌ Failed to connect to SQLite database");
+    } else {
+      // Setup database tables and sample data
+      await this.dbHandler.setupDatabase();
     }
   }
 
@@ -659,6 +690,15 @@ async function initSession(sessionId) {
       keepAliveIntervalMs: 30000,
       // Always online settings
       defaultQueryTimeoutMs: 60000,
+      // Enhanced persistence settings
+      shouldSyncHistoryMessage: () => false,
+      shouldIgnoreJid: () => false,
+      // Connection recovery settings
+      browser: ["WA-KU", "Chrome", "1.0.0"],
+      // Keep connection alive
+      keepAliveIntervalMs: 25000,
+      // Enhanced reconnection
+      connectTimeoutMs: 90000,
       logger: {
         level: "silent",
         child() {
@@ -1117,44 +1157,68 @@ async function initSession(sessionId) {
       }
     });
 
-    // Add aggressive heartbeat to keep connection alive
+    // Enhanced heartbeat mechanism with better error handling
     const heartbeatInterval = setInterval(async () => {
       if (
         sessions[sessionId] &&
         sessions[sessionId].status === "connected" &&
-        sock
+        sock &&
+        !sessions[sessionId].deleted
       ) {
         try {
-          // Send multiple keep-alive signals
-          await sock.presenceSubscribe(sessionId + "@s.whatsapp.net");
+          // Multiple keep-alive strategies
+          await Promise.allSettled([
+            // Send presence update
+            sock.sendPresenceUpdate("available"),
+            // Subscribe to presence
+            sock.presenceSubscribe(sessionId + "@s.whatsapp.net"),
+            // Send typing indicator to keep connection active
+            sock.sendPresenceUpdate("composing"),
+          ]);
 
-          // Send a ping to keep connection alive
-          await sock.sendPresenceUpdate("available");
-
-          // Update last heartbeat time
+          // Reset heartbeat failures on success
+          sessions[sessionId].heartbeatFailures = 0;
           sessions[sessionId].lastHeartbeat = Date.now();
 
-          console.log(`💓 Heartbeat sent for ${sessionId}`);
+          console.log(`💓 Enhanced heartbeat sent for ${sessionId}`);
         } catch (err) {
           console.log(`💓 Heartbeat failed for ${sessionId}:`, err.message);
 
-          // If heartbeat fails multiple times, mark as disconnected
+          // Increment heartbeat failures
           sessions[sessionId].heartbeatFailures =
             (sessions[sessionId].heartbeatFailures || 0) + 1;
 
-          if (sessions[sessionId].heartbeatFailures >= 3) {
+          // If heartbeat fails multiple times, attempt reconnection
+          if (sessions[sessionId].heartbeatFailures >= 5) {
             console.log(
-              `💔 Multiple heartbeat failures for ${sessionId}, marking as disconnected`
+              `💔 Multiple heartbeat failures for ${sessionId}, attempting reconnection`
             );
             sessions[sessionId].status = "disconnected";
             sessions[sessionId].heartbeatFailures = 0;
+
+            // Trigger reconnection
+            if (!sessions[sessionId].reconnecting) {
+              sessions[sessionId].reconnecting = true;
+              setTimeout(() => {
+                if (sessions[sessionId] && !sessions[sessionId].deleted) {
+                  initSession(sessionId).catch((err) => {
+                    console.error(
+                      `❌ Heartbeat-triggered reconnection failed for ${sessionId}:`,
+                      err
+                    );
+                    sessions[sessionId].reconnecting = false;
+                  });
+                }
+              }, 5000);
+            }
+
             clearInterval(heartbeatInterval);
           }
         }
       } else {
         clearInterval(heartbeatInterval);
       }
-    }, 15000); // Every 15 seconds
+    }, 20000); // Every 20 seconds (less aggressive)
   } catch (err) {
     console.error(`❌ Failed to initialize session ${sessionId}:`, err);
     sessions[sessionId].status = "error";
@@ -1817,6 +1881,718 @@ app.get("/api/botStatus/:sessionId", (req, res) => {
   });
 });
 
+// ===== USER MANAGEMENT API ENDPOINTS =====
+
+// API: Get all users
+app.get("/api/users", async (req, res) => {
+  try {
+    const dbHandler = new SQLiteDatabaseHandler();
+    const connected = await dbHandler.connect();
+
+    if (!connected) {
+      return res
+        .status(500)
+        .json({ error: "SQLite database connection failed" });
+    }
+
+    const stmt = dbHandler.db.prepare(`
+      SELECT id, username, email, full_name, role, is_active, created_at, updated_at, last_login 
+      FROM tb_users 
+      ORDER BY created_at DESC
+    `);
+    const rows = stmt.all();
+
+    res.json(rows);
+  } catch (error) {
+    console.error("Error fetching users:", error);
+    res.status(500).json({ error: "Failed to fetch users" });
+  }
+});
+
+// API: Create new user
+app.post("/api/users", async (req, res) => {
+  try {
+    const { username, password, email, full_name, role = "user" } = req.body;
+
+    if (!username || !password) {
+      return res
+        .status(400)
+        .json({ error: "Username and password are required" });
+    }
+
+    const dbHandler = new SQLiteDatabaseHandler();
+    await dbHandler.connect();
+
+    // Check if username already exists
+    const checkStmt = dbHandler.db.prepare(
+      "SELECT id FROM tb_users WHERE username = ?"
+    );
+    const existingUser = checkStmt.get(username);
+
+    if (existingUser) {
+      return res.status(400).json({ error: "Username already exists" });
+    }
+
+    // Hash password
+    const bcrypt = await import("bcrypt");
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    const stmt = dbHandler.db.prepare(`
+      INSERT INTO tb_users (username, password, email, full_name, role, is_active) 
+      VALUES (?, ?, ?, ?, ?, 1)
+    `);
+    const result = stmt.run(
+      username,
+      hashedPassword,
+      email || null,
+      full_name || null,
+      role
+    );
+
+    res.json({
+      success: true,
+      id: result.lastInsertRowid,
+      message: "User created successfully",
+    });
+  } catch (error) {
+    console.error("Error creating user:", error);
+    res.status(500).json({ error: "Failed to create user" });
+  }
+});
+
+// API: Update user
+app.put("/api/users/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { username, email, full_name, role, is_active } = req.body;
+
+    if (!username) {
+      return res.status(400).json({ error: "Username is required" });
+    }
+
+    const dbHandler = new SQLiteDatabaseHandler();
+    await dbHandler.connect();
+
+    // Check if username already exists (excluding current user)
+    const checkStmt = dbHandler.db.prepare(
+      "SELECT id FROM tb_users WHERE username = ? AND id != ?"
+    );
+    const existingUser = checkStmt.get(username, id);
+
+    if (existingUser) {
+      return res.status(400).json({ error: "Username already exists" });
+    }
+
+    const stmt = dbHandler.db.prepare(`
+      UPDATE tb_users 
+      SET username = ?, email = ?, full_name = ?, role = ?, is_active = ?, updated_at = CURRENT_TIMESTAMP 
+      WHERE id = ?
+    `);
+    const result = stmt.run(
+      username,
+      email || null,
+      full_name || null,
+      role || "user",
+      is_active ? 1 : 0,
+      id
+    );
+
+    if (result.changes === 0) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    res.json({
+      success: true,
+      message: "User updated successfully",
+    });
+  } catch (error) {
+    console.error("Error updating user:", error);
+    res.status(500).json({ error: "Failed to update user" });
+  }
+});
+
+// API: Change user password
+app.put("/api/users/:id/password", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { password } = req.body;
+
+    if (!password) {
+      return res.status(400).json({ error: "Password is required" });
+    }
+
+    const dbHandler = new SQLiteDatabaseHandler();
+    await dbHandler.connect();
+
+    // Hash password
+    const bcrypt = await import("bcrypt");
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    const stmt = dbHandler.db.prepare(`
+      UPDATE tb_users 
+      SET password = ?, updated_at = CURRENT_TIMESTAMP 
+      WHERE id = ?
+    `);
+    const result = stmt.run(hashedPassword, id);
+
+    if (result.changes === 0) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    res.json({
+      success: true,
+      message: "Password updated successfully",
+    });
+  } catch (error) {
+    console.error("Error updating password:", error);
+    res.status(500).json({ error: "Failed to update password" });
+  }
+});
+
+// API: Delete user
+app.delete("/api/users/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const dbHandler = new SQLiteDatabaseHandler();
+    await dbHandler.connect();
+
+    // Prevent deleting admin user
+    const checkStmt = dbHandler.db.prepare(
+      "SELECT username FROM tb_users WHERE id = ?"
+    );
+    const user = checkStmt.get(id);
+
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    if (user.username === "admin") {
+      return res.status(400).json({ error: "Cannot delete admin user" });
+    }
+
+    const stmt = dbHandler.db.prepare("DELETE FROM tb_users WHERE id = ?");
+    const result = stmt.run(id);
+
+    if (result.changes === 0) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    res.json({
+      success: true,
+      message: "User deleted successfully",
+    });
+  } catch (error) {
+    console.error("Error deleting user:", error);
+    res.status(500).json({ error: "Failed to delete user" });
+  }
+});
+
+// API: User login
+app.post("/api/auth/login", async (req, res) => {
+  try {
+    const { username, password } = req.body;
+
+    if (!username || !password) {
+      return res
+        .status(400)
+        .json({ error: "Username and password are required" });
+    }
+
+    const dbHandler = new SQLiteDatabaseHandler();
+    await dbHandler.connect();
+
+    const stmt = dbHandler.db.prepare(`
+      SELECT id, username, password, email, full_name, role, is_active 
+      FROM tb_users 
+      WHERE username = ?
+    `);
+    const user = stmt.get(username);
+
+    if (!user) {
+      return res.status(401).json({ error: "Invalid credentials" });
+    }
+
+    if (!user.is_active) {
+      return res.status(401).json({ error: "Account is deactivated" });
+    }
+
+    // Verify password
+    const bcrypt = await import("bcrypt");
+    const isValidPassword = await bcrypt.compare(password, user.password);
+
+    if (!isValidPassword) {
+      return res.status(401).json({ error: "Invalid credentials" });
+    }
+
+    // Update last login
+    const updateStmt = dbHandler.db.prepare(
+      "UPDATE tb_users SET last_login = CURRENT_TIMESTAMP WHERE id = ?"
+    );
+    updateStmt.run(user.id);
+
+    // Set session cookie
+    res.cookie("authToken", "wa-gateway-auth-2024", {
+      httpOnly: true,
+      secure: false,
+      maxAge: 24 * 60 * 60 * 1000, // 24 hours
+    });
+    res.cookie("username", user.username, {
+      httpOnly: false,
+      secure: false,
+      maxAge: 24 * 60 * 60 * 1000, // 24 hours
+    });
+
+    res.json({
+      success: true,
+      user: {
+        id: user.id,
+        username: user.username,
+        email: user.email,
+        full_name: user.full_name,
+        role: user.role,
+      },
+      message: "Login successful",
+    });
+  } catch (error) {
+    console.error("Error during login:", error);
+    res.status(500).json({ error: "Login failed" });
+  }
+});
+
+// API: User logout
+app.post("/api/auth/logout", (req, res) => {
+  res.clearCookie("authToken");
+  res.clearCookie("username");
+  res.json({ success: true, message: "Logout successful" });
+});
+
+// API: Get current user info
+app.get("/api/auth/me", async (req, res) => {
+  try {
+    const username = req.cookies?.username;
+
+    if (!username) {
+      return res.status(401).json({ error: "Not authenticated" });
+    }
+
+    const dbHandler = new SQLiteDatabaseHandler();
+    await dbHandler.connect();
+
+    const stmt = dbHandler.db.prepare(`
+      SELECT id, username, email, full_name, role, is_active, created_at, last_login 
+      FROM tb_users 
+      WHERE username = ?
+    `);
+    const user = stmt.get(username);
+
+    if (!user) {
+      return res.status(401).json({ error: "User not found" });
+    }
+
+    res.json({
+      success: true,
+      user: {
+        id: user.id,
+        username: user.username,
+        email: user.email,
+        full_name: user.full_name,
+        role: user.role,
+        is_active: user.is_active,
+        created_at: user.created_at,
+        last_login: user.last_login,
+      },
+    });
+  } catch (error) {
+    console.error("Error getting user info:", error);
+    res.status(500).json({ error: "Failed to get user info" });
+  }
+});
+
+// API: User management page
+app.get("/user-management", requireAuth, (req, res) => {
+  const username = req.cookies?.username || "Admin";
+  res.render("user-management", { username });
+});
+
+// API: User login (form-based)
+app.post("/login", async (req, res) => {
+  try {
+    const { username, password } = req.body;
+
+    if (!username || !password) {
+      return res.render("login", {
+        error: "Username and password are required",
+      });
+    }
+
+    const dbHandler = new SQLiteDatabaseHandler();
+    await dbHandler.connect();
+
+    const stmt = dbHandler.db.prepare(`
+      SELECT id, username, password, email, full_name, role, is_active 
+      FROM tb_users 
+      WHERE username = ?
+    `);
+    const user = stmt.get(username);
+
+    if (!user) {
+      return res.render("login", { error: "Invalid credentials" });
+    }
+
+    if (!user.is_active) {
+      return res.render("login", { error: "Account is deactivated" });
+    }
+
+    // Verify password
+    const bcrypt = await import("bcrypt");
+    const isValidPassword = await bcrypt.compare(password, user.password);
+
+    if (!isValidPassword) {
+      return res.render("login", { error: "Invalid credentials" });
+    }
+
+    // Update last login
+    const updateStmt = dbHandler.db.prepare(
+      "UPDATE tb_users SET last_login = CURRENT_TIMESTAMP WHERE id = ?"
+    );
+    updateStmt.run(user.id);
+
+    // Set session cookie
+    res.cookie("authToken", "wa-gateway-auth-2024", {
+      httpOnly: true,
+      secure: false,
+      maxAge: 24 * 60 * 60 * 1000, // 24 hours
+    });
+    res.cookie("username", user.username, {
+      httpOnly: false,
+      secure: false,
+      maxAge: 24 * 60 * 60 * 1000, // 24 hours
+    });
+
+    res.redirect("/dashboard");
+  } catch (error) {
+    console.error("Error during login:", error);
+    res.render("login", { error: "Login failed" });
+  }
+});
+
+// API: User logout
+app.post("/logout", (req, res) => {
+  res.clearCookie("authToken");
+  res.clearCookie("username");
+  res.redirect("/login");
+});
+
+// ===== MENU MANAGEMENT API ENDPOINTS =====
+
+// API: Get all menus (tb_menu)
+app.get("/api/menus", async (req, res) => {
+  try {
+    const dbHandler = new SQLiteDatabaseHandler();
+    const connected = await dbHandler.connect();
+
+    if (!connected) {
+      return res
+        .status(500)
+        .json({ error: "SQLite database connection failed" });
+    }
+
+    const stmt = dbHandler.db.prepare(
+      "SELECT id, name, remark, time_stamp FROM tb_menu ORDER BY id ASC"
+    );
+    const rows = stmt.all();
+
+    res.json(rows);
+  } catch (error) {
+    console.error("Error fetching menus:", error);
+    res.status(500).json({ error: "Failed to fetch menus" });
+  }
+});
+
+// API: Create new menu (tb_menu)
+app.post("/api/menus", async (req, res) => {
+  try {
+    const { name, remark } = req.body;
+
+    if (!name || !remark) {
+      return res.status(400).json({ error: "Name and remark are required" });
+    }
+
+    const dbHandler = new SQLiteDatabaseHandler();
+    await dbHandler.connect();
+
+    const stmt = dbHandler.db.prepare(
+      "INSERT INTO tb_menu (name, remark) VALUES (?, ?)"
+    );
+    const result = stmt.run(name, remark);
+
+    res.json({
+      success: true,
+      id: result.lastInsertRowid,
+      message: "Menu created successfully",
+    });
+  } catch (error) {
+    console.error("Error creating menu:", error);
+    res.status(500).json({ error: "Failed to create menu" });
+  }
+});
+
+// API: Update menu (tb_menu)
+app.put("/api/menus/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, remark } = req.body;
+
+    if (!name || !remark) {
+      return res.status(400).json({ error: "Name and remark are required" });
+    }
+
+    const dbHandler = new SQLiteDatabaseHandler();
+    await dbHandler.connect();
+
+    const stmt = dbHandler.db.prepare(
+      "UPDATE tb_menu SET name = ?, remark = ? WHERE id = ?"
+    );
+    const result = stmt.run(name, remark, id);
+
+    if (result.changes === 0) {
+      return res.status(404).json({ error: "Menu not found" });
+    }
+
+    res.json({
+      success: true,
+      message: "Menu updated successfully",
+    });
+  } catch (error) {
+    console.error("Error updating menu:", error);
+    res.status(500).json({ error: "Failed to update menu" });
+  }
+});
+
+// API: Delete menu (tb_menu)
+app.delete("/api/menus/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const dbHandler = new SQLiteDatabaseHandler();
+    await dbHandler.connect();
+
+    // Check if menu is being used by bot menus
+    const checkStmt = dbHandler.db.prepare(
+      "SELECT COUNT(*) as count FROM tb_botmenu WHERE menu_id = ?"
+    );
+    const botMenus = checkStmt.get(id);
+
+    if (botMenus.count > 0) {
+      return res.status(400).json({
+        error: "Cannot delete menu. It is being used by bot menus.",
+      });
+    }
+
+    const stmt = dbHandler.db.prepare("DELETE FROM tb_menu WHERE id = ?");
+    const result = stmt.run(id);
+
+    if (result.changes === 0) {
+      return res.status(404).json({ error: "Menu not found" });
+    }
+
+    res.json({
+      success: true,
+      message: "Menu deleted successfully",
+    });
+  } catch (error) {
+    console.error("Error deleting menu:", error);
+    res.status(500).json({ error: "Failed to delete menu" });
+  }
+});
+
+// API: Get all bot menus (tb_botmenu)
+app.get("/api/botmenus", async (req, res) => {
+  try {
+    const dbHandler = new SQLiteDatabaseHandler();
+    const connected = await dbHandler.connect();
+
+    if (!connected) {
+      return res
+        .status(500)
+        .json({ error: "SQLite database connection failed" });
+    }
+
+    const stmt = dbHandler.db.prepare(`
+      SELECT id, menu_id, parent_id, keyword, description, url 
+      FROM tb_botmenu 
+      ORDER BY menu_id ASC, parent_id ASC, keyword ASC
+    `);
+    const rows = stmt.all();
+
+    res.json(rows);
+  } catch (error) {
+    console.error("Error fetching bot menus:", error);
+    res.status(500).json({ error: "Failed to fetch bot menus" });
+  }
+});
+
+// API: Create new bot menu (tb_botmenu)
+app.post("/api/botmenus", async (req, res) => {
+  try {
+    const { menu_id, parent_id, keyword, description, url } = req.body;
+
+    if (!menu_id || !keyword || !description) {
+      return res.status(400).json({
+        error: "Menu ID, keyword, and description are required",
+      });
+    }
+
+    const dbHandler = new SQLiteDatabaseHandler();
+    await dbHandler.connect();
+
+    // Check if menu_id exists
+    const menuCheck = dbHandler.db
+      .prepare("SELECT id FROM tb_menu WHERE id = ?")
+      .get(menu_id);
+
+    if (!menuCheck) {
+      return res.status(400).json({ error: "Menu ID does not exist" });
+    }
+
+    // Check if parent_id exists (if provided)
+    if (parent_id) {
+      const parentCheck = dbHandler.db
+        .prepare("SELECT id FROM tb_botmenu WHERE id = ?")
+        .get(parent_id);
+
+      if (!parentCheck) {
+        return res.status(400).json({ error: "Parent ID does not exist" });
+      }
+    }
+
+    const stmt = dbHandler.db.prepare(
+      "INSERT INTO tb_botmenu (menu_id, parent_id, keyword, description, url) VALUES (?, ?, ?, ?, ?)"
+    );
+    const result = stmt.run(
+      menu_id,
+      parent_id || null,
+      keyword,
+      description,
+      url || null
+    );
+
+    res.json({
+      success: true,
+      id: result.lastInsertRowid,
+      message: "Bot menu created successfully",
+    });
+  } catch (error) {
+    console.error("Error creating bot menu:", error);
+    res.status(500).json({ error: "Failed to create bot menu" });
+  }
+});
+
+// API: Update bot menu (tb_botmenu)
+app.put("/api/botmenus/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { menu_id, parent_id, keyword, description, url } = req.body;
+
+    if (!menu_id || !keyword || !description) {
+      return res.status(400).json({
+        error: "Menu ID, keyword, and description are required",
+      });
+    }
+
+    const dbHandler = new SQLiteDatabaseHandler();
+    await dbHandler.connect();
+
+    // Check if menu_id exists
+    const menuCheck = dbHandler.db
+      .prepare("SELECT id FROM tb_menu WHERE id = ?")
+      .get(menu_id);
+
+    if (!menuCheck) {
+      return res.status(400).json({ error: "Menu ID does not exist" });
+    }
+
+    // Check if parent_id exists (if provided)
+    if (parent_id) {
+      const parentCheck = dbHandler.db
+        .prepare("SELECT id FROM tb_botmenu WHERE id = ? AND id != ?")
+        .get(parent_id, id);
+
+      if (!parentCheck) {
+        return res.status(400).json({ error: "Parent ID does not exist" });
+      }
+    }
+
+    const stmt = dbHandler.db.prepare(
+      "UPDATE tb_botmenu SET menu_id = ?, parent_id = ?, keyword = ?, description = ?, url = ? WHERE id = ?"
+    );
+    const result = stmt.run(
+      menu_id,
+      parent_id || null,
+      keyword,
+      description,
+      url || null,
+      id
+    );
+
+    if (result.changes === 0) {
+      return res.status(404).json({ error: "Bot menu not found" });
+    }
+
+    res.json({
+      success: true,
+      message: "Bot menu updated successfully",
+    });
+  } catch (error) {
+    console.error("Error updating bot menu:", error);
+    res.status(500).json({ error: "Failed to update bot menu" });
+  }
+});
+
+// API: Delete bot menu (tb_botmenu)
+app.delete("/api/botmenus/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const dbHandler = new SQLiteDatabaseHandler();
+    await dbHandler.connect();
+
+    // Check if this bot menu has children
+    const checkStmt = dbHandler.db.prepare(
+      "SELECT COUNT(*) as count FROM tb_botmenu WHERE parent_id = ?"
+    );
+    const children = checkStmt.get(id);
+
+    if (children.count > 0) {
+      return res.status(400).json({
+        error: "Cannot delete bot menu. It has child menus.",
+      });
+    }
+
+    const stmt = dbHandler.db.prepare("DELETE FROM tb_botmenu WHERE id = ?");
+    const result = stmt.run(id);
+
+    if (result.changes === 0) {
+      return res.status(404).json({ error: "Bot menu not found" });
+    }
+
+    res.json({
+      success: true,
+      message: "Bot menu deleted successfully",
+    });
+  } catch (error) {
+    console.error("Error deleting bot menu:", error);
+    res.status(500).json({ error: "Failed to delete bot menu" });
+  }
+});
+
+// API: Get menu management page
+app.get("/menu-management", requireAuth, (req, res) => {
+  const username = req.cookies?.username || "Admin";
+  res.render("menu-management", { username });
+});
+
 // API: Bot PHP Handler
 app.post("/api/botPhp", (req, res) => {
   const { action, message } = req.body;
@@ -1902,7 +2678,7 @@ app.use((err, req, res, next) => {
   });
 });
 
-// Aggressive auto-recovery mechanism for disconnected sessions
+// Enhanced auto-recovery mechanism for disconnected sessions
 setInterval(() => {
   Object.keys(sessions).forEach((sessionId) => {
     const session = sessions[sessionId];
@@ -1914,29 +2690,45 @@ setInterval(() => {
       !session.deleted &&
       !session.reconnecting
     ) {
-      // Unlimited auto-recovery attempts
+      // Enhanced auto-recovery with better logging
       console.log(`🔄 Auto-recovery: Attempting to reconnect ${sessionId}`);
       session.reconnecting = true;
       session.reconnectAttempts = (session.reconnectAttempts || 0) + 1;
 
-      // Exponential backoff with jitter
-      const baseDelay = 5000;
-      const jitter = Math.random() * 2000; // 0-2 seconds random
-      const delay = Math.min(baseDelay + jitter, 30000); // Max 30 seconds
+      // Exponential backoff with jitter and max attempts tracking
+      const baseDelay = Math.min(
+        5000 * Math.pow(1.5, session.reconnectAttempts - 1),
+        60000
+      );
+      const jitter = Math.random() * 3000; // 0-3 seconds random
+      const delay = Math.min(baseDelay + jitter, 60000); // Max 60 seconds
+
+      console.log(
+        `⏳ Auto-recovery delay for ${sessionId}: ${Math.round(
+          delay / 1000
+        )}s (attempt ${session.reconnectAttempts})`
+      );
 
       setTimeout(() => {
         if (sessions[sessionId] && !sessions[sessionId].deleted) {
           initSession(sessionId).catch((err) => {
             console.error(`❌ Auto-recovery failed for ${sessionId}:`, err);
             sessions[sessionId].reconnecting = false;
+
+            // If too many failed attempts, log warning
+            if (session.reconnectAttempts > 10) {
+              console.warn(
+                `⚠️ Session ${sessionId} has failed ${session.reconnectAttempts} reconnection attempts`
+              );
+            }
           });
         }
       }, delay);
     }
   });
-}, 30000); // Check every 30 seconds
+}, 45000); // Check every 45 seconds (less aggressive)
 
-// Connection monitoring and health check
+// Enhanced connection monitoring and health check
 setInterval(() => {
   Object.keys(sessions).forEach((sessionId) => {
     const session = sessions[sessionId];
@@ -1946,9 +2738,9 @@ setInterval(() => {
       const lastHeartbeat = session.lastHeartbeat || 0;
       const timeSinceHeartbeat = now - lastHeartbeat;
 
-      // If no heartbeat for more than 2 minutes, consider disconnected
-      if (timeSinceHeartbeat > 120000) {
-        // 2 minutes
+      // If no heartbeat for more than 3 minutes, consider disconnected
+      if (timeSinceHeartbeat > 180000) {
+        // 3 minutes
         console.log(
           `💔 No heartbeat detected for ${sessionId} for ${Math.round(
             timeSinceHeartbeat / 1000
@@ -1957,18 +2749,25 @@ setInterval(() => {
         session.status = "disconnected";
       }
 
-      // Log connection health
-      if (timeSinceHeartbeat > 60000) {
-        // 1 minute
+      // Log connection health warnings
+      if (timeSinceHeartbeat > 120000) {
+        // 2 minutes
         console.log(
           `⚠️ Session ${sessionId} health warning: No heartbeat for ${Math.round(
+            timeSinceHeartbeat / 1000
+          )}s`
+        );
+      } else if (timeSinceHeartbeat > 60000) {
+        // 1 minute
+        console.log(
+          `💓 Session ${sessionId} heartbeat delay: ${Math.round(
             timeSinceHeartbeat / 1000
           )}s`
         );
       }
     }
   });
-}, 30000); // Check every 30 seconds
+}, 60000); // Check every 60 seconds (less aggressive)
 
 // Graceful shutdown
 process.on("SIGTERM", () => {
@@ -2031,11 +2830,20 @@ console.log("🤖 Bot Handler initialized and integrated");
 console.log("🔧 Enhanced message decryption handling enabled");
 console.log("🛡️ PreKey error recovery mechanisms active");
 console.log("🔄 Always Connected Mode: ENABLED");
-console.log("💓 Aggressive Heartbeat: Every 15 seconds");
-console.log("🔄 Unlimited Auto-Recovery: ENABLED");
-console.log("📊 Connection Monitoring: Every 30 seconds");
+console.log("💓 Enhanced Heartbeat: Every 20 seconds with multiple strategies");
+console.log("🔄 Smart Auto-Recovery: ENABLED with exponential backoff");
+console.log("📊 Enhanced Connection Monitoring: Every 60 seconds");
+console.log("🔗 Database Connection: Enhanced with retry mechanism");
+console.log("🏥 Health Check: Enhanced with detailed session status");
+
+// 404 handler - must be last
+app.use((req, res) => {
+  console.log(`❌ Route not found: ${req.method} ${req.path}`);
+  res.status(404).json({ error: "Route not found" });
+});
 
 // Start server
+console.log("🔄 Starting server...");
 app
   .listen(PORT, HOST, () => {
     console.log(`🚀 WA Gateway running at http://${HOST}:${PORT}/dashboard`);
@@ -2045,6 +2853,9 @@ app
     console.log(`📊 PID: ${process.pid}`);
     console.log(`🤖 Bot integration active`);
     console.log(`🔧 Enhanced decryption error handling enabled`);
+    console.log(
+      `📋 Menu Management available at: http://${HOST}:${PORT}/menu-management`
+    );
   })
   .on("error", (err) => {
     console.error(`❌ Server failed to start:`, err);

@@ -1,0 +1,571 @@
+<!DOCTYPE html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
+    />
+    <title>User Management - WA Gateway</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <link
+      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css"
+      rel="stylesheet"
+    />
+    <style>
+      .gradient-bg {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      }
+      .card-hover {
+        transition: all 0.3s ease;
+      }
+      .card-hover:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+      }
+      .status-connected {
+        background: linear-gradient(135deg, #10b981, #059669);
+      }
+      .status-connecting {
+        background: linear-gradient(135deg, #f59e0b, #d97706);
+      }
+      .status-disconnected {
+        background: linear-gradient(135deg, #6b7280, #4b5563);
+      }
+      .code-block {
+        background: #1f2937;
+        color: #f9fafb;
+        border-radius: 0.5rem;
+        padding: 1rem;
+        font-family: "Courier New", monospace;
+        font-size: 0.875rem;
+        overflow-x: auto;
+      }
+
+      .code-block pre {
+        margin: 0;
+        padding: 0;
+        background: transparent;
+        border: none;
+      }
+      .modal {
+        display: none; /* Hidden by default */
+        position: fixed; /* Stay in place */
+        z-index: 1000; /* Sit on top */
+        left: 0;
+        top: 0;
+        width: 100%; /* Full width */
+        height: 100%; /* Full height */
+        overflow: auto; /* Enable scroll if needed */
+        background-color: rgba(0, 0, 0, 0.4); /* Black w/ opacity */
+        justify-content: center;
+        align-items: center;
+      }
+      .modal-content {
+        background-color: #fefefe;
+        margin: auto;
+        padding: 20px;
+        border-radius: 8px;
+        width: 80%;
+        max-width: 600px;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+      }
+      .close-button {
+        color: #aaa;
+        float: right;
+        font-size: 28px;
+        font-weight: bold;
+      }
+      .close-button:hover,
+      .close-button:focus {
+        color: black;
+        text-decoration: none;
+        cursor: pointer;
+      }
+    </style>
+  </head>
+  <body class="bg-gray-100 font-sans leading-normal tracking-normal">
+    <!-- Navbar -->
+    <nav class="bg-gray-800 p-4 text-white shadow-md">
+      <div
+        class="container mx-auto flex justify-between items-center flex-wrap"
+      >
+        <div class="text-xl font-bold">WA-KU Gateway</div>
+        <div class="flex items-center space-x-4 mt-2 md:mt-0">
+          <div class="text-sm">
+            <i class="fas fa-user-circle mr-1"></i>
+            <%= username || 'Admin' %>
+          </div>
+          <a
+            href="/dashboard"
+            class="bg-gray-700 hover:bg-gray-600 px-3 py-2 rounded-md text-sm font-medium transition-colors duration-300"
+          >
+            <i class="fas fa-tachometer-alt mr-1"></i>Dashboard
+          </a>
+          <a
+            href="/menu-management"
+            class="bg-gray-700 hover:bg-gray-600 px-3 py-2 rounded-md text-sm font-medium transition-colors duration-300"
+          >
+            <i class="fas fa-cogs mr-1"></i>Menu Management
+          </a>
+          <a
+            href="/user-management"
+            class="bg-blue-600 hover:bg-blue-700 px-3 py-2 rounded-md text-sm font-medium transition-colors duration-300"
+          >
+            <i class="fas fa-users mr-1"></i>User Management
+          </a>
+          <button
+            onclick="logout()"
+            class="bg-red-600 hover:bg-red-700 px-3 py-2 rounded-md text-sm font-medium transition-colors duration-300"
+          >
+            <i class="fas fa-sign-out-alt mr-1"></i>Logout
+          </button>
+        </div>
+      </div>
+    </nav>
+
+    <!-- Main Content -->
+    <div class="container mx-auto mt-8 p-4">
+      <h1 class="text-3xl font-bold text-gray-800 mb-6">User Management</h1>
+
+      <!-- Add User Button -->
+      <div class="mb-6 text-right">
+        <button
+          id="addUserBtn"
+          class="bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-4 rounded-lg shadow-md transition-colors duration-300"
+        >
+          <i class="fas fa-plus-circle mr-2"></i>Add New User
+        </button>
+      </div>
+
+      <!-- Users Table -->
+      <div class="bg-white shadow-md rounded-lg overflow-hidden">
+        <table class="min-w-full leading-normal">
+          <thead>
+            <tr>
+              <th
+                class="px-5 py-3 border-b-2 border-gray-200 bg-gray-100 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider"
+              >
+                ID
+              </th>
+              <th
+                class="px-5 py-3 border-b-2 border-gray-200 bg-gray-100 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider"
+              >
+                Username
+              </th>
+              <th
+                class="px-5 py-3 border-b-2 border-gray-200 bg-gray-100 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider"
+              >
+                Email
+              </th>
+              <th
+                class="px-5 py-3 border-b-2 border-gray-200 bg-gray-100 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider"
+              >
+                Full Name
+              </th>
+              <th
+                class="px-5 py-3 border-b-2 border-gray-200 bg-gray-100 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider"
+              >
+                Role
+              </th>
+              <th
+                class="px-5 py-3 border-b-2 border-gray-200 bg-gray-100 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider"
+              >
+                Active
+              </th>
+              <th
+                class="px-5 py-3 border-b-2 border-gray-200 bg-gray-100 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider"
+              >
+                Created At
+              </th>
+              <th
+                class="px-5 py-3 border-b-2 border-gray-200 bg-gray-100 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider"
+              >
+                Last Login
+              </th>
+              <th
+                class="px-5 py-3 border-b-2 border-gray-200 bg-gray-100 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider"
+              >
+                Actions
+              </th>
+            </tr>
+          </thead>
+          <tbody id="usersTableBody">
+            <!-- User rows will be loaded here by JavaScript -->
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Add/Edit User Modal -->
+    <div id="userModal" class="modal">
+      <div class="modal-content">
+        <span class="close-button" onclick="closeModal()">&times;</span>
+        <h2 id="modalTitle" class="text-2xl font-bold mb-4">Add New User</h2>
+        <form id="userForm" class="space-y-4">
+          <div>
+            <label for="username" class="block text-gray-700">Username</label>
+            <input
+              type="text"
+              id="username"
+              name="username"
+              class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
+              required
+            />
+          </div>
+          <div id="passwordField">
+            <label for="password" class="block text-gray-700">Password</label>
+            <input
+              type="password"
+              id="password"
+              name="password"
+              class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
+            />
+          </div>
+          <div>
+            <label for="email" class="block text-gray-700">Email</label>
+            <input
+              type="email"
+              id="email"
+              name="email"
+              class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
+            />
+          </div>
+          <div>
+            <label for="full_name" class="block text-gray-700">Full Name</label>
+            <input
+              type="text"
+              id="full_name"
+              name="full_name"
+              class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
+            />
+          </div>
+          <div>
+            <label for="role" class="block text-gray-700">Role</label>
+            <select
+              id="role"
+              name="role"
+              class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
+            >
+              <option value="user">User</option>
+              <option value="admin">Admin</option>
+            </select>
+          </div>
+          <div id="isActiveField">
+            <label class="inline-flex items-center">
+              <input
+                type="checkbox"
+                id="is_active"
+                name="is_active"
+                class="form-checkbox"
+                checked
+              />
+              <span class="ml-2 text-gray-700">Is Active</span>
+            </label>
+          </div>
+          <input type="hidden" id="userId" name="id" />
+          <button
+            type="submit"
+            class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-lg shadow-md transition-colors duration-300"
+          >
+            Save User
+          </button>
+        </form>
+      </div>
+    </div>
+
+    <script>
+      const logout = async () => {
+        const result = await Swal.fire({
+          title: "Are you sure?",
+          text: "You will be logged out!",
+          icon: "warning",
+          showCancelButton: true,
+          confirmButtonColor: "#3085d6",
+          cancelButtonColor: "#d33",
+          confirmButtonText: "Yes, logout!",
+        });
+
+        if (result.isConfirmed) {
+          try {
+            const response = await fetch("/logout", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+              },
+            });
+
+            if (response.ok) {
+              window.location.href = "/login";
+            } else {
+              Swal.fire("Error!", "Failed to logout.", "error");
+            }
+          } catch (error) {
+            console.error("Logout error:", error);
+            Swal.fire("Error!", "An error occurred during logout.", "error");
+          }
+        }
+      };
+
+      let users = []; // To store fetched users
+      let currentUserId = null; // To track user being edited
+
+      const fetchUsers = async () => {
+        try {
+          const response = await fetch("/api/users");
+          if (!response.ok) {
+            throw new Error("Failed to fetch users");
+          }
+          users = await response.json();
+          renderUsersTable();
+        } catch (error) {
+          console.error("Error fetching users:", error);
+          Swal.fire("Error", "Failed to load users.", "error");
+        }
+      };
+
+      const renderUsersTable = () => {
+        const tableBody = document.getElementById("usersTableBody");
+        tableBody.innerHTML = ""; // Clear existing rows
+
+        users.forEach((user) => {
+          const row = tableBody.insertRow();
+          row.innerHTML = `
+            <td class="px-5 py-5 border-b border-gray-200 bg-white text-sm">${
+              user.id
+            }</td>
+            <td class="px-5 py-5 border-b border-gray-200 bg-white text-sm">${
+              user.username
+            }</td>
+            <td class="px-5 py-5 border-b border-gray-200 bg-white text-sm">${
+              user.email || "-"
+            }</td>
+            <td class="px-5 py-5 border-b border-gray-200 bg-white text-sm">${
+              user.full_name || "-"
+            }</td>
+            <td class="px-5 py-5 border-b border-gray-200 bg-white text-sm">${
+              user.role
+            }</td>
+            <td class="px-5 py-5 border-b border-gray-200 bg-white text-sm">
+              ${
+                user.is_active
+                  ? '<span class="relative inline-block px-3 py-1 font-semibold text-green-900 leading-tight"><span aria-hidden="true" class="absolute inset-0 bg-green-200 opacity-50 rounded-full"></span><span class="relative">Active</span></span>'
+                  : '<span class="relative inline-block px-3 py-1 font-semibold text-red-900 leading-tight"><span aria-hidden="true" class="absolute inset-0 bg-red-200 opacity-50 rounded-full"></span><span class="relative">Inactive</span></span>'
+              }
+            </td>
+            <td class="px-5 py-5 border-b border-gray-200 bg-white text-sm">${new Date(
+              user.created_at
+            ).toLocaleString()}</td>
+            <td class="px-5 py-5 border-b border-gray-200 bg-white text-sm">${
+              user.last_login ? new Date(user.last_login).toLocaleString() : "-"
+            }</td>
+            <td class="px-5 py-5 border-b border-gray-200 bg-white text-sm">
+              <button onclick="editUser(${
+                user.id
+              })" class="text-blue-600 hover:text-blue-900 mr-3">
+                <i class="fas fa-edit"></i> Edit
+              </button>
+              <button onclick="changePassword(${
+                user.id
+              })" class="text-yellow-600 hover:text-yellow-900 mr-3">
+                <i class="fas fa-key"></i> Password
+              </button>
+              <button onclick="deleteUser(${
+                user.id
+              })" class="text-red-600 hover:text-red-900">
+                <i class="fas fa-trash"></i> Delete
+              </button>
+            </td>
+          `;
+        });
+      };
+
+      const openModal = (title, user = null) => {
+        document.getElementById("modalTitle").innerText = title;
+        document.getElementById("userForm").reset();
+        document.getElementById("passwordField").style.display = "block";
+        document.getElementById("isActiveField").style.display = "block";
+        document.getElementById("userId").value = "";
+        currentUserId = null;
+
+        if (user) {
+          currentUserId = user.id;
+          document.getElementById("userId").value = user.id;
+          document.getElementById("username").value = user.username;
+          document.getElementById("email").value = user.email;
+          document.getElementById("full_name").value = user.full_name;
+          document.getElementById("role").value = user.role;
+          document.getElementById("is_active").checked = user.is_active;
+          document.getElementById("passwordField").style.display = "none"; // Hide password for edit
+          if (user.username === "admin") {
+            // Prevent deactivating admin
+            document.getElementById("is_active").disabled = true;
+          } else {
+            document.getElementById("is_active").disabled = false;
+          }
+        } else {
+          document.getElementById("is_active").disabled = false;
+        }
+        document.getElementById("userModal").style.display = "flex";
+      };
+
+      const closeModal = () => {
+        document.getElementById("userModal").style.display = "none";
+      };
+
+      document.getElementById("addUserBtn").addEventListener("click", () => {
+        openModal("Add New User");
+      });
+
+      const editUser = (id) => {
+        const user = users.find((u) => u.id === id);
+        if (user) {
+          openModal("Edit User", user);
+        }
+      };
+
+      const changePassword = async (id) => {
+        const { value: password } = await Swal.fire({
+          title: "Set New Password",
+          input: "password",
+          inputPlaceholder: "Enter new password",
+          inputAttributes: {
+            autocapitalize: "off",
+            autocorrect: "off",
+          },
+          showCancelButton: true,
+          confirmButtonText: "Change Password",
+          showLoaderOnConfirm: true,
+          preConfirm: (password) => {
+            if (!password) {
+              Swal.showValidationMessage("Password cannot be empty");
+            }
+            return password;
+          },
+          allowOutsideClick: () => !Swal.isLoading(),
+        });
+
+        if (password) {
+          try {
+            const response = await fetch(`/api/users/${id}/password`, {
+              method: "PUT",
+              headers: {
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({ password }),
+            });
+
+            const data = await response.json();
+            if (response.ok) {
+              Swal.fire("Success!", data.message, "success");
+            } else {
+              Swal.fire(
+                "Error!",
+                data.error || "Failed to change password.",
+                "error"
+              );
+            }
+          } catch (error) {
+            console.error("Error changing password:", error);
+            Swal.fire(
+              "Error!",
+              "An error occurred while changing password.",
+              "error"
+            );
+          }
+        }
+      };
+
+      const deleteUser = async (id) => {
+        const userToDelete = users.find((u) => u.id === id);
+        if (userToDelete && userToDelete.username === "admin") {
+          Swal.fire("Error", "Cannot delete the default admin user.", "error");
+          return;
+        }
+
+        const result = await Swal.fire({
+          title: "Are you sure?",
+          text: "You won't be able to revert this!",
+          icon: "warning",
+          showCancelButton: true,
+          confirmButtonColor: "#d33",
+          cancelButtonColor: "#3085d6",
+          confirmButtonText: "Yes, delete it!",
+        });
+
+        if (result.isConfirmed) {
+          try {
+            const response = await fetch(`/api/users/${id}`, {
+              method: "DELETE",
+            });
+
+            const data = await response.json();
+            if (response.ok) {
+              Swal.fire("Deleted!", data.message, "success");
+              fetchUsers(); // Reload users
+            } else {
+              Swal.fire(
+                "Error!",
+                data.error || "Failed to delete user.",
+                "error"
+              );
+            }
+          } catch (error) {
+            console.error("Error deleting user:", error);
+            Swal.fire("Error!", "An error occurred during deletion.", "error");
+          }
+        }
+      };
+
+      document
+        .getElementById("userForm")
+        .addEventListener("submit", async (event) => {
+          event.preventDefault();
+          const formData = new FormData(event.target);
+          const userData = Object.fromEntries(formData.entries());
+
+          // Convert is_active checkbox to boolean/integer
+          userData.is_active = userData.is_active === "on" ? 1 : 0;
+
+          const url = currentUserId
+            ? `/api/users/${currentUserId}`
+            : "/api/users";
+          const method = currentUserId ? "PUT" : "POST";
+
+          try {
+            const response = await fetch(url, {
+              method: method,
+              headers: {
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify(userData),
+            });
+
+            const data = await response.json();
+            if (response.ok) {
+              Swal.fire("Success!", data.message, "success");
+              closeModal();
+              fetchUsers(); // Reload users
+            } else {
+              Swal.fire(
+                "Error!",
+                data.error || "Failed to save user.",
+                "error"
+              );
+            }
+          } catch (error) {
+            console.error("Error saving user:", error);
+            Swal.fire(
+              "Error!",
+              "An error occurred while saving user.",
+              "error"
+            );
+          }
+        });
+
+      // Initial fetch
+      fetchUsers();
+    </script>
+  </body>
+</html>

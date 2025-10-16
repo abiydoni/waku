@@ -1,106 +1,100 @@
-import mysql from "mysql2/promise";
-import { databaseConfig } from "./databaseConfig.js";
+// Database Configuration untuk SQLite (Built-in)
+import Database from "better-sqlite3";
 
-class DatabaseHandler {
+class SQLiteDatabaseHandler {
   constructor() {
-    this.connection = null;
-    this.config = databaseConfig;
+    this.db = null;
+    this.dbPath = "./database.sqlite";
   }
 
-  async connect() {
+  async connect(maxRetries = 3, retryDelay = 2000) {
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        console.log(`🔄 SQLite connection attempt ${attempt}/${maxRetries}`);
+
+        this.db = new Database(this.dbPath);
+
+        // Enable WAL mode for better performance
+        this.db.pragma("journal_mode = WAL");
+        this.db.pragma("synchronous = NORMAL");
+        this.db.pragma("cache_size = 1000");
+        this.db.pragma("temp_store = memory");
+
+        // Test connection
+        this.db.prepare("SELECT 1").get();
+
+        console.log("✅ SQLite database connected successfully");
+        return true;
+      } catch (error) {
+        console.error(
+          `❌ SQLite connection attempt ${attempt} failed:`,
+          error.message
+        );
+
+        // Jika ini bukan attempt terakhir, tunggu sebelum retry
+        if (attempt < maxRetries) {
+          console.log(`⏳ Waiting ${retryDelay}ms before retry...`);
+          await new Promise((resolve) => setTimeout(resolve, retryDelay));
+          retryDelay *= 2; // Exponential backoff
+        }
+      }
+    }
+
+    console.error("❌ All SQLite connection attempts failed");
+    return false;
+  }
+
+  // Method untuk check connection health
+  checkConnectionHealth() {
     try {
-      this.connection = await mysql.createConnection(this.config);
-      console.log("✅ Database connected successfully");
+      if (!this.db) return false;
+      this.db.prepare("SELECT 1").get();
       return true;
     } catch (error) {
-      console.error("❌ Database connection failed:", error.message);
-
-      // Berikan pesan error yang spesifik berdasarkan jenis error
-      if (error.code === "ECONNREFUSED") {
-        console.error(
-          "🔌 MySQL server tidak berjalan atau tidak dapat diakses"
-        );
-      } else if (error.code === "ER_ACCESS_DENIED_ERROR") {
-        console.error("🔐 Username atau password database salah");
-      } else if (error.code === "ER_BAD_DB_ERROR") {
-        console.error("📁 Database tidak ditemukan");
-      } else if (error.code === "ETIMEDOUT") {
-        console.error("⏰ Koneksi timeout - server tidak merespon");
-      } else {
-        console.error("❓ Error tidak dikenal:", error.code);
-      }
-
+      console.error("❌ SQLite health check failed:", error.message);
       return false;
     }
   }
 
+  // Method untuk reconnect jika diperlukan
+  async ensureConnection() {
+    if (!this.checkConnectionHealth()) {
+      console.log("🔄 SQLite connection lost, attempting to reconnect...");
+      return await this.connect();
+    }
+    return true;
+  }
+
   // Method untuk mendapatkan pesan error yang user-friendly
   getErrorMessage(error) {
-    if (error.code === "ECONNREFUSED") {
-      return (
-        "🔌 *Server Database Tidak Tersedia*\n\n" +
-        "Mohon maaf, server database sedang tidak dapat diakses.\n" +
-        "Silakan coba lagi dalam beberapa saat.\n\n" +
-        "🔙 Ketik 'menu' untuk kembali ke menu utama"
-      );
-    } else if (error.code === "ER_ACCESS_DENIED_ERROR") {
-      return (
-        "🔐 *Error Koneksi Database*\n\n" +
-        "Terjadi masalah dengan koneksi database.\n" +
-        "Silakan hubungi administrator untuk memperbaiki masalah ini.\n\n" +
-        "🔙 Ketik 'menu' untuk kembali ke menu utama"
-      );
-    } else if (error.code === "ER_BAD_DB_ERROR") {
-      return (
-        "📁 *Database Tidak Ditemukan*\n\n" +
-        "Database yang diperlukan tidak tersedia.\n" +
-        "Silakan hubungi administrator untuk setup database.\n\n" +
-        "🔙 Ketik 'menu' untuk kembali ke menu utama"
-      );
-    } else if (error.code === "ETIMEDOUT") {
-      return (
-        "⏰ *Koneksi Timeout*\n\n" +
-        "Server database tidak merespon dalam waktu yang ditentukan.\n" +
-        "Silakan coba lagi nanti.\n\n" +
-        "🔙 Ketik 'menu' untuk kembali ke menu utama"
-      );
-    } else {
-      return (
-        "❌ *Terjadi Kesalahan Sistem*\n\n" +
-        "Mohon maaf, terjadi kesalahan yang tidak terduga.\n" +
-        "Silakan coba lagi atau hubungi administrator.\n\n" +
-        "🔙 Ketik 'menu' untuk kembali ke menu utama"
-      );
-    }
+    return (
+      "❌ *Terjadi Kesalahan Database*\n\n" +
+      "Mohon maaf, terjadi kesalahan saat mengakses database.\n" +
+      "Silakan coba lagi atau hubungi administrator.\n\n" +
+      "🔙 Ketik 'menu' untuk kembali ke menu utama"
+    );
   }
 
   // Method untuk mendapatkan semua menu utama (parent_id = NULL)
   async getMainMenus() {
     try {
-      if (!this.connection) {
+      // Pastikan koneksi database sehat
+      await this.ensureConnection();
+
+      if (!this.db) {
         throw new Error("Database not connected");
       }
 
-      const [rows] = await this.connection.execute(
-        `SELECT id, parent_id, keyword, description, url 
-         FROM tb_botmenu 
-         WHERE parent_id IS NULL 
-         ORDER BY keyword ASC`
-      );
-      return rows;
+      const stmt = this.db.prepare(`
+        SELECT id, parent_id, keyword, description, url 
+        FROM tb_botmenu 
+        WHERE parent_id IS NULL 
+        ORDER BY keyword ASC
+      `);
+
+      return stmt.all();
     } catch (error) {
       console.error("Error getting main menus:", error.message);
-
-      // Jika error koneksi database, throw error untuk ditangani di level atas
-      if (
-        error.code === "ECONNREFUSED" ||
-        error.code === "ER_ACCESS_DENIED_ERROR" ||
-        error.code === "ER_BAD_DB_ERROR" ||
-        error.code === "ETIMEDOUT"
-      ) {
-        throw error;
-      }
-
       return [];
     }
   }
@@ -108,14 +102,14 @@ class DatabaseHandler {
   // Method untuk mendapatkan sub menu berdasarkan parent_id
   async getSubMenus(parentId) {
     try {
-      const [rows] = await this.connection.execute(
-        `SELECT id, parent_id, keyword, description, url 
-         FROM tb_botmenu 
-         WHERE parent_id = ? 
-         ORDER BY keyword ASC`,
-        [parentId]
-      );
-      return rows;
+      const stmt = this.db.prepare(`
+        SELECT id, parent_id, keyword, description, url 
+        FROM tb_botmenu 
+        WHERE parent_id = ? 
+        ORDER BY keyword ASC
+      `);
+
+      return stmt.all(parentId);
     } catch (error) {
       console.error("Error getting sub menus:", error.message);
       return [];
@@ -125,13 +119,13 @@ class DatabaseHandler {
   // Method untuk mendapatkan menu berdasarkan ID
   async getMenuById(id) {
     try {
-      const [rows] = await this.connection.execute(
-        `SELECT id, parent_id, keyword, description, url 
-         FROM tb_botmenu 
-         WHERE id = ?`,
-        [id]
-      );
-      return rows[0] || null;
+      const stmt = this.db.prepare(`
+        SELECT id, parent_id, keyword, description, url 
+        FROM tb_botmenu 
+        WHERE id = ?
+      `);
+
+      return stmt.get(id) || null;
     } catch (error) {
       console.error("Error getting menu by ID:", error.message);
       return null;
@@ -141,36 +135,23 @@ class DatabaseHandler {
   // Method untuk mendapatkan menu berdasarkan keyword (semua menu)
   async getMenuByKeyword(keyword) {
     try {
-      if (!this.connection) {
+      // Pastikan koneksi database sehat
+      await this.ensureConnection();
+
+      if (!this.db) {
         throw new Error("Database not connected");
       }
 
-      // Cari di semua menu berdasarkan keyword (baik menu utama maupun sub menu)
-      const [rows] = await this.connection.execute(
-        `SELECT id, parent_id, keyword, description, url 
-         FROM tb_botmenu 
-         WHERE keyword = ?`,
-        [keyword]
-      );
+      const stmt = this.db.prepare(`
+        SELECT id, parent_id, keyword, description, url 
+        FROM tb_botmenu 
+        WHERE keyword = ?
+      `);
 
-      if (rows.length > 0) {
-        return rows[0];
-      }
-
-      return null;
+      const result = stmt.get(keyword);
+      return result || null;
     } catch (error) {
       console.error("Error getting menu by keyword:", error.message);
-
-      // Jika error koneksi database, throw error untuk ditangani di level atas
-      if (
-        error.code === "ECONNREFUSED" ||
-        error.code === "ER_ACCESS_DENIED_ERROR" ||
-        error.code === "ER_BAD_DB_ERROR" ||
-        error.code === "ETIMEDOUT"
-      ) {
-        throw error;
-      }
-
       return null;
     }
   }
@@ -178,18 +159,18 @@ class DatabaseHandler {
   // Method untuk mencari menu berdasarkan deskripsi
   async searchMenuByDescription(searchTerm) {
     try {
-      if (!this.connection) {
+      if (!this.db) {
         throw new Error("Database not connected");
       }
 
-      const [rows] = await this.connection.execute(
-        `SELECT id, parent_id, keyword, description, url 
-         FROM tb_botmenu 
-         WHERE description LIKE ? AND parent_id IS NULL
-         ORDER BY keyword ASC`,
-        [`%${searchTerm}%`]
-      );
-      return rows;
+      const stmt = this.db.prepare(`
+        SELECT id, parent_id, keyword, description, url 
+        FROM tb_botmenu 
+        WHERE description LIKE ? AND parent_id IS NULL
+        ORDER BY keyword ASC
+      `);
+
+      return stmt.all(`%${searchTerm}%`);
     } catch (error) {
       console.error("Error searching menu:", error.message);
       return [];
@@ -208,7 +189,6 @@ class DatabaseHandler {
       });
 
       if (!response.ok) {
-        // Berikan pesan error berdasarkan status code
         if (response.status === 404) {
           return (
             "🔍 *Data Tidak Ditemukan*\n\n" +
@@ -221,13 +201,6 @@ class DatabaseHandler {
             "⚠️ *Server Sedang Bermasalah*\n\n" +
             "Server sedang mengalami gangguan internal.\n" +
             "Silakan coba lagi dalam beberapa saat.\n\n" +
-            "🔙 Ketik 'menu' untuk kembali ke menu utama"
-          );
-        } else if (response.status === 403) {
-          return (
-            "🔒 *Akses Ditolak*\n\n" +
-            "Anda tidak memiliki izin untuk mengakses data ini.\n" +
-            "Silakan hubungi administrator.\n\n" +
             "🔙 Ketik 'menu' untuk kembali ke menu utama"
           );
         } else {
@@ -268,7 +241,6 @@ class DatabaseHandler {
     } catch (error) {
       console.error("Error calling external API:", error.message);
 
-      // Berikan pesan error berdasarkan jenis error
       if (error.name === "TypeError" && error.message.includes("fetch")) {
         return (
           "🌐 *Server Tidak Dapat Diakses*\n\n" +
@@ -488,6 +460,105 @@ class DatabaseHandler {
       return this.getErrorMessage(error);
     }
   }
+
+  // Method untuk setup database dan tabel
+  async setupDatabase() {
+    try {
+      if (!this.db) {
+        await this.connect();
+      }
+
+      // Create tables
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS tb_menu (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          name TEXT NOT NULL,
+          remark TEXT,
+          time_stamp DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+        
+        CREATE TABLE IF NOT EXISTS tb_botmenu (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          menu_id INTEGER,
+          parent_id INTEGER,
+          keyword TEXT NOT NULL,
+          description TEXT NOT NULL,
+          url TEXT,
+          FOREIGN KEY (menu_id) REFERENCES tb_menu(id),
+          FOREIGN KEY (parent_id) REFERENCES tb_botmenu(id)
+        );
+        
+        CREATE TABLE IF NOT EXISTS tb_users (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          username TEXT UNIQUE NOT NULL,
+          password TEXT NOT NULL,
+          email TEXT,
+          full_name TEXT,
+          role TEXT DEFAULT 'user',
+          is_active INTEGER DEFAULT 1,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          last_login DATETIME
+        );
+      `);
+
+      // Insert sample data jika belum ada
+      const checkMenu = this.db
+        .prepare("SELECT COUNT(*) as count FROM tb_menu")
+        .get();
+      if (checkMenu.count === 0) {
+        this.db.exec(`
+          INSERT INTO tb_menu (id, name, remark) VALUES 
+          (1, 'Menu Utama', 'Menu utama bot'),
+          (2, 'Informasi', 'Menu informasi'),
+          (3, 'Layanan', 'Menu layanan');
+          
+          INSERT INTO tb_botmenu (id, menu_id, parent_id, keyword, description, url) VALUES 
+          (1, 1, NULL, '1', 'Menu Utama', NULL),
+          (2, 1, NULL, '2', 'Informasi', NULL),
+          (3, 1, NULL, '3', 'Layanan', NULL),
+          (4, 2, NULL, '21', 'Tentang Kami', NULL),
+          (5, 2, NULL, '22', 'Kontak', NULL),
+          (6, 3, NULL, '31', 'Jadwal', NULL),
+          (7, 3, NULL, '32', 'Booking', NULL);
+        `);
+
+        console.log("✅ Sample data inserted into SQLite database");
+      }
+
+      // Insert default admin user jika belum ada
+      const checkUsers = this.db
+        .prepare("SELECT COUNT(*) as count FROM tb_users")
+        .get();
+      if (checkUsers.count === 0) {
+        const bcrypt = await import("bcrypt");
+        const hashedPassword = await bcrypt.hash("admin321", 10);
+
+        this.db.exec(`
+          INSERT INTO tb_users (username, password, email, full_name, role, is_active) VALUES 
+          ('admin', '${hashedPassword}', 'admin@waku.local', 'Administrator', 'admin', 1),
+          ('user', '${hashedPassword}', 'user@waku.local', 'Regular User', 'user', 1);
+        `);
+
+        console.log("✅ Default users created (admin/admin321, user/admin321)");
+      }
+
+      console.log("✅ SQLite database setup completed");
+      return true;
+    } catch (error) {
+      console.error("❌ SQLite setup failed:", error);
+      return false;
+    }
+  }
+
+  // Method untuk close connection
+  close() {
+    if (this.db) {
+      this.db.close();
+      this.db = null;
+      console.log("✅ SQLite connection closed");
+    }
+  }
 }
 
-export default DatabaseHandler;
+export default SQLiteDatabaseHandler;

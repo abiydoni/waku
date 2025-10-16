@@ -41,7 +41,7 @@
         transform: translateY(-2px);
         box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
       }
-      
+
       /* Mobile optimizations */
       @media (max-width: 640px) {
         body {
@@ -59,7 +59,7 @@
           font-size: 16px;
         }
       }
-      
+
       /* Very small screens */
       @media (max-width: 375px) {
         .login-card {
@@ -85,7 +85,14 @@
         </div>
 
         <!-- Login Form -->
-        <form id="loginForm" class="space-y-6">
+        <form id="loginForm" action="/login" method="POST" class="space-y-6">
+          <% if (error) { %>
+          <div
+            class="bg-red-500 bg-opacity-20 border border-red-500 border-opacity-50 text-red-100 px-4 py-3 rounded-lg"
+          >
+            <i class="fas fa-exclamation-triangle mr-2"></i><%= error %>
+          </div>
+          <% } %>
           <!-- Username Field -->
           <div>
             <label
@@ -185,20 +192,17 @@
           loginBtn.disabled = true;
 
           try {
-            const response = await fetch("/api/login", {
+            const response = await fetch("/login", {
               method: "POST",
               headers: {
-                "Content-Type": "application/json",
+                "Content-Type": "application/x-www-form-urlencoded",
               },
-              body: JSON.stringify({
-                username: username,
-                password: password,
-              }),
+              body: `username=${encodeURIComponent(
+                username
+              )}&password=${encodeURIComponent(password)}`,
             });
 
-            const data = await response.json();
-
-            if (data.success) {
+            if (response.ok) {
               // Show success message
               Swal.fire({
                 icon: "success",
@@ -212,7 +216,9 @@
                 window.location.href = "/dashboard";
               });
             } else {
-              throw new Error(data.message || "Login gagal");
+              // If login fails, redirect to login page with error
+              window.location.href =
+                "/login?error=Username atau password salah";
             }
           } catch (error) {
             console.error("Login error:", error);
