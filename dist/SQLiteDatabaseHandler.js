@@ -1,33 +1,44 @@
-// Database Configuration untuk SQLite (Built-in)
-import Database from "better-sqlite3";
+// Database Configuration untuk JSON File Database (Built-in Node.js)
+import fs from "fs/promises";
+import path from "path";
+import bcrypt from "bcrypt"; // Import bcrypt for password hashing
 
 class SQLiteDatabaseHandler {
   constructor() {
-    this.db = null;
-    this.dbPath = "./database.sqlite";
+    this.dbPath = "./database.json";
+    this.data = {
+      tb_menu: [],
+      tb_botmenu: [],
+      tb_users: [],
+    };
   }
 
   async connect(maxRetries = 3, retryDelay = 2000) {
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
-        console.log(`🔄 SQLite connection attempt ${attempt}/${maxRetries}`);
+        console.log(
+          `🔄 JSON Database connection attempt ${attempt}/${maxRetries}`
+        );
 
-        this.db = new Database(this.dbPath);
+        // Load existing data or create new
+        try {
+          const fileContent = await fs.readFile(this.dbPath, "utf8");
+          this.data = JSON.parse(fileContent);
+        } catch (error) {
+          // File doesn't exist, create new
+          console.log("📁 Creating new database file");
+          this.data = {
+            tb_menu: [],
+            tb_botmenu: [],
+            tb_users: [],
+          };
+        }
 
-        // Enable WAL mode for better performance
-        this.db.pragma("journal_mode = WAL");
-        this.db.pragma("synchronous = NORMAL");
-        this.db.pragma("cache_size = 1000");
-        this.db.pragma("temp_store = memory");
-
-        // Test connection
-        this.db.prepare("SELECT 1").get();
-
-        console.log("✅ SQLite database connected successfully");
+        console.log("✅ JSON Database connected successfully");
         return true;
       } catch (error) {
         console.error(
-          `❌ SQLite connection attempt ${attempt} failed:`,
+          `❌ JSON Database connection attempt ${attempt} failed:`,
           error.message
         );
 
@@ -40,18 +51,27 @@ class SQLiteDatabaseHandler {
       }
     }
 
-    console.error("❌ All SQLite connection attempts failed");
+    console.error("❌ All JSON Database connection attempts failed");
     return false;
+  }
+
+  // Method untuk save data ke file
+  async saveData() {
+    try {
+      await fs.writeFile(this.dbPath, JSON.stringify(this.data, null, 2));
+      return true;
+    } catch (error) {
+      console.error("Error saving data:", error.message);
+      return false;
+    }
   }
 
   // Method untuk check connection health
   checkConnectionHealth() {
     try {
-      if (!this.db) return false;
-      this.db.prepare("SELECT 1").get();
-      return true;
+      return this.data !== null;
     } catch (error) {
-      console.error("❌ SQLite health check failed:", error.message);
+      console.error("❌ JSON Database health check failed:", error.message);
       return false;
     }
   }
@@ -59,7 +79,9 @@ class SQLiteDatabaseHandler {
   // Method untuk reconnect jika diperlukan
   async ensureConnection() {
     if (!this.checkConnectionHealth()) {
-      console.log("🔄 SQLite connection lost, attempting to reconnect...");
+      console.log(
+        "🔄 JSON Database connection lost, attempting to reconnect..."
+      );
       return await this.connect();
     }
     return true;
@@ -78,21 +100,15 @@ class SQLiteDatabaseHandler {
   // Method untuk mendapatkan semua menu utama (parent_id = NULL)
   async getMainMenus() {
     try {
-      // Pastikan koneksi database sehat
+      // Pastikan koneksi database sehat dan data fresh
       await this.ensureConnection();
 
-      if (!this.db) {
-        throw new Error("Database not connected");
-      }
+      // Reload data dari file untuk memastikan data terbaru
+      await this.connect();
 
-      const stmt = this.db.prepare(`
-        SELECT id, parent_id, keyword, description, url 
-        FROM tb_botmenu 
-        WHERE parent_id IS NULL 
-        ORDER BY keyword ASC
-      `);
-
-      return stmt.all();
+      return this.data.tb_botmenu
+        .filter((menu) => menu.parent_id === null)
+        .sort((a, b) => a.keyword.localeCompare(b.keyword));
     } catch (error) {
       console.error("Error getting main menus:", error.message);
       return [];
@@ -102,14 +118,13 @@ class SQLiteDatabaseHandler {
   // Method untuk mendapatkan sub menu berdasarkan parent_id
   async getSubMenus(parentId) {
     try {
-      const stmt = this.db.prepare(`
-        SELECT id, parent_id, keyword, description, url 
-        FROM tb_botmenu 
-        WHERE parent_id = ? 
-        ORDER BY keyword ASC
-      `);
+      // Pastikan data fresh
+      await this.ensureConnection();
+      await this.connect();
 
-      return stmt.all(parentId);
+      return this.data.tb_botmenu
+        .filter((menu) => menu.parent_id === parentId)
+        .sort((a, b) => a.keyword.localeCompare(b.keyword));
     } catch (error) {
       console.error("Error getting sub menus:", error.message);
       return [];
@@ -119,13 +134,11 @@ class SQLiteDatabaseHandler {
   // Method untuk mendapatkan menu berdasarkan ID
   async getMenuById(id) {
     try {
-      const stmt = this.db.prepare(`
-        SELECT id, parent_id, keyword, description, url 
-        FROM tb_botmenu 
-        WHERE id = ?
-      `);
+      // Pastikan data fresh
+      await this.ensureConnection();
+      await this.connect();
 
-      return stmt.get(id) || null;
+      return this.data.tb_botmenu.find((menu) => menu.id === id) || null;
     } catch (error) {
       console.error("Error getting menu by ID:", error.message);
       return null;
@@ -135,21 +148,13 @@ class SQLiteDatabaseHandler {
   // Method untuk mendapatkan menu berdasarkan keyword (semua menu)
   async getMenuByKeyword(keyword) {
     try {
-      // Pastikan koneksi database sehat
+      // Pastikan data fresh
       await this.ensureConnection();
+      await this.connect();
 
-      if (!this.db) {
-        throw new Error("Database not connected");
-      }
-
-      const stmt = this.db.prepare(`
-        SELECT id, parent_id, keyword, description, url 
-        FROM tb_botmenu 
-        WHERE keyword = ?
-      `);
-
-      const result = stmt.get(keyword);
-      return result || null;
+      return (
+        this.data.tb_botmenu.find((menu) => menu.keyword === keyword) || null
+      );
     } catch (error) {
       console.error("Error getting menu by keyword:", error.message);
       return null;
@@ -159,18 +164,17 @@ class SQLiteDatabaseHandler {
   // Method untuk mencari menu berdasarkan deskripsi
   async searchMenuByDescription(searchTerm) {
     try {
-      if (!this.db) {
-        throw new Error("Database not connected");
-      }
+      // Pastikan data fresh
+      await this.ensureConnection();
+      await this.connect();
 
-      const stmt = this.db.prepare(`
-        SELECT id, parent_id, keyword, description, url 
-        FROM tb_botmenu 
-        WHERE description LIKE ? AND parent_id IS NULL
-        ORDER BY keyword ASC
-      `);
-
-      return stmt.all(`%${searchTerm}%`);
+      return this.data.tb_botmenu
+        .filter(
+          (menu) =>
+            menu.description.toLowerCase().includes(searchTerm.toLowerCase()) &&
+            menu.parent_id === null
+        )
+        .sort((a, b) => a.keyword.localeCompare(b.keyword));
     } catch (error) {
       console.error("Error searching menu:", error.message);
       return [];
@@ -464,100 +468,143 @@ class SQLiteDatabaseHandler {
   // Method untuk setup database dan tabel
   async setupDatabase() {
     try {
-      if (!this.db) {
+      if (!this.data) {
         await this.connect();
       }
 
-      // Create tables
-      this.db.exec(`
-        CREATE TABLE IF NOT EXISTS tb_menu (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          name TEXT NOT NULL,
-          remark TEXT,
-          time_stamp DATETIME DEFAULT CURRENT_TIMESTAMP
-        );
-        
-        CREATE TABLE IF NOT EXISTS tb_botmenu (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          menu_id INTEGER,
-          parent_id INTEGER,
-          keyword TEXT NOT NULL,
-          description TEXT NOT NULL,
-          url TEXT,
-          FOREIGN KEY (menu_id) REFERENCES tb_menu(id),
-          FOREIGN KEY (parent_id) REFERENCES tb_botmenu(id)
-        );
-        
-        CREATE TABLE IF NOT EXISTS tb_users (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          username TEXT UNIQUE NOT NULL,
-          password TEXT NOT NULL,
-          email TEXT,
-          full_name TEXT,
-          role TEXT DEFAULT 'user',
-          is_active INTEGER DEFAULT 1,
-          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-          last_login DATETIME
-        );
-      `);
-
       // Insert sample data jika belum ada
-      const checkMenu = this.db
-        .prepare("SELECT COUNT(*) as count FROM tb_menu")
-        .get();
-      if (checkMenu.count === 0) {
-        this.db.exec(`
-          INSERT INTO tb_menu (id, name, remark) VALUES 
-          (1, 'Menu Utama', 'Menu utama bot'),
-          (2, 'Informasi', 'Menu informasi'),
-          (3, 'Layanan', 'Menu layanan');
-          
-          INSERT INTO tb_botmenu (id, menu_id, parent_id, keyword, description, url) VALUES 
-          (1, 1, NULL, '1', 'Menu Utama', NULL),
-          (2, 1, NULL, '2', 'Informasi', NULL),
-          (3, 1, NULL, '3', 'Layanan', NULL),
-          (4, 2, NULL, '21', 'Tentang Kami', NULL),
-          (5, 2, NULL, '22', 'Kontak', NULL),
-          (6, 3, NULL, '31', 'Jadwal', NULL),
-          (7, 3, NULL, '32', 'Booking', NULL);
-        `);
+      if (this.data.tb_menu.length === 0) {
+        this.data.tb_menu = [
+          {
+            id: 1,
+            name: "Menu Utama",
+            remark: "Menu utama bot",
+            time_stamp: new Date().toISOString(),
+          },
+          {
+            id: 2,
+            name: "Informasi",
+            remark: "Menu informasi",
+            time_stamp: new Date().toISOString(),
+          },
+          {
+            id: 3,
+            name: "Layanan",
+            remark: "Menu layanan",
+            time_stamp: new Date().toISOString(),
+          },
+        ];
 
-        console.log("✅ Sample data inserted into SQLite database");
+        this.data.tb_botmenu = [
+          {
+            id: 1,
+            menu_id: 1,
+            parent_id: null,
+            keyword: "1",
+            description: "Menu Utama",
+            url: null,
+          },
+          {
+            id: 2,
+            menu_id: 1,
+            parent_id: null,
+            keyword: "2",
+            description: "Informasi",
+            url: null,
+          },
+          {
+            id: 3,
+            menu_id: 1,
+            parent_id: null,
+            keyword: "3",
+            description: "Layanan",
+            url: null,
+          },
+          {
+            id: 4,
+            menu_id: 2,
+            parent_id: null,
+            keyword: "21",
+            description: "Tentang Kami",
+            url: null,
+          },
+          {
+            id: 5,
+            menu_id: 2,
+            parent_id: null,
+            keyword: "22",
+            description: "Kontak",
+            url: null,
+          },
+          {
+            id: 6,
+            menu_id: 3,
+            parent_id: null,
+            keyword: "31",
+            description: "Jadwal",
+            url: null,
+          },
+          {
+            id: 7,
+            menu_id: 3,
+            parent_id: null,
+            keyword: "32",
+            description: "Booking",
+            url: null,
+          },
+        ];
+
+        await this.saveData();
+        console.log("✅ Sample data inserted into JSON database");
       }
 
       // Insert default admin user jika belum ada
-      const checkUsers = this.db
-        .prepare("SELECT COUNT(*) as count FROM tb_users")
-        .get();
-      if (checkUsers.count === 0) {
-        const bcrypt = await import("bcrypt");
+      if (this.data.tb_users.length === 0) {
         const hashedPassword = await bcrypt.hash("admin321", 10);
 
-        this.db.exec(`
-          INSERT INTO tb_users (username, password, email, full_name, role, is_active) VALUES 
-          ('admin', '${hashedPassword}', 'admin@waku.local', 'Administrator', 'admin', 1),
-          ('user', '${hashedPassword}', 'user@waku.local', 'Regular User', 'user', 1);
-        `);
+        this.data.tb_users = [
+          {
+            id: 1,
+            username: "admin",
+            password: hashedPassword,
+            email: "admin@waku.local",
+            full_name: "Administrator",
+            role: "admin",
+            is_active: 1,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            last_login: null,
+          },
+          {
+            id: 2,
+            username: "user",
+            password: hashedPassword,
+            email: "user@waku.local",
+            full_name: "Regular User",
+            role: "user",
+            is_active: 1,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            last_login: null,
+          },
+        ];
 
+        await this.saveData();
         console.log("✅ Default users created (admin/admin321, user/admin321)");
       }
 
-      console.log("✅ SQLite database setup completed");
+      console.log("✅ JSON Database setup completed");
       return true;
     } catch (error) {
-      console.error("❌ SQLite setup failed:", error);
+      console.error("❌ JSON Database setup failed:", error);
       return false;
     }
   }
 
   // Method untuk close connection
   close() {
-    if (this.db) {
-      this.db.close();
-      this.db = null;
-      console.log("✅ SQLite connection closed");
-    }
+    this.data = null;
+    console.log("✅ JSON Database connection closed");
   }
 }
 

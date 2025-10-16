@@ -1,0 +1,164 @@
+{
+  "tb_menu": [
+    {
+      "id": 1,
+      "name": "Jimpitan",
+      "remark": "Bot menu untuk aplikasi jimpitan RT.07",
+      "time_stamp": "2025-10-12T16:12:23.000Z"
+    },
+    {
+      "id": 2,
+      "name": "Gemma",
+      "remark": "Bot menu untuk aplikasi Bibel Gemma",
+      "time_stamp": "2025-10-12T16:12:23.000Z"
+    }
+  ],
+  "tb_botmenu": [
+    {
+      "id": 1,
+      "menu_id": 1,
+      "parent_id": null,
+      "keyword": "1",
+      "description": "Data Kepala Keluarga",
+      "url": "https://rt07.appsbee.my.id/api/ambil_kk.php"
+    },
+    {
+      "id": 2,
+      "menu_id": 1,
+      "parent_id": null,
+      "keyword": "2",
+      "description": "Jadwal jaga hari ini",
+      "url": "https://rt07.appsbee.my.id/api/ambil_jaga.php"
+    },
+    {
+      "id": 3,
+      "menu_id": 1,
+      "parent_id": null,
+      "keyword": "3",
+      "description": "Semua Jadwal Jaga",
+      "url": null
+    },
+    {
+      "id": 4,
+      "menu_id": 1,
+      "parent_id": null,
+      "keyword": "4",
+      "description": "Laporan",
+      "url": null
+    },
+    {
+      "id": 5,
+      "menu_id": 1,
+      "parent_id": 3,
+      "keyword": "31",
+      "description": "Senin",
+      "url": "https://rt07.appsbee.my.id/api/ambil_jaga_semua.php?hari=Monday"
+    },
+    {
+      "id": 6,
+      "menu_id": 1,
+      "parent_id": 3,
+      "keyword": "32",
+      "description": "Selasa",
+      "url": "https://rt07.appsbee.my.id/api/ambil_jaga_semua.php?hari=Tuesday"
+    },
+    {
+      "id": 7,
+      "menu_id": 1,
+      "parent_id": 3,
+      "keyword": "33",
+      "description": "Rabu",
+      "url": "https://rt07.appsbee.my.id/api/ambil_jaga_semua.php?hari=Wednesday"
+    },
+    {
+      "id": 8,
+      "menu_id": 1,
+      "parent_id": 3,
+      "keyword": "34",
+      "description": "Kamis",
+      "url": "https://rt07.appsbee.my.id/api/ambil_jaga_semua.php?hari=Thursday"
+    },
+    {
+      "id": 9,
+      "menu_id": 1,
+      "parent_id": 3,
+      "keyword": "35",
+      "description": "Jumat",
+      "url": "https://rt07.appsbee.my.id/api/ambil_jaga_semua.php?hari=Friday"
+    },
+    {
+      "id": 10,
+      "menu_id": 1,
+      "parent_id": 3,
+      "keyword": "36",
+      "description": "Sabtu",
+      "url": "https://rt07.appsbee.my.id/api/ambil_jaga_semua.php?hari=Saturday"
+    },
+    {
+      "id": 11,
+      "menu_id": 1,
+      "parent_id": 3,
+      "keyword": "37",
+      "description": "Minggu",
+      "url": "https://rt07.appsbee.my.id/api/ambil_jaga_semua.php?hari=Sunday"
+    },
+    {
+      "id": 13,
+      "menu_id": 1,
+      "parent_id": 4,
+      "keyword": "41",
+      "description": "Laporan jimpitan semalam",
+      "url": "https://rt07.appsbee.my.id/api/ambil_jimpitan.php"
+    },
+    {
+      "id": 14,
+      "menu_id": 1,
+      "parent_id": 4,
+      "keyword": "42",
+      "description": "Laporan lain",
+      "url": "Masih dalam pengembangan"
+    },
+    {
+      "id": 18,
+      "menu_id": 1,
+      "parent_id": null,
+      "keyword": "5",
+      "description": "Informasi lain",
+      "url": "Masih dalam pengembangan"
+    },
+    {
+      "id": 22,
+      "menu_id": 2,
+      "parent_id": null,
+      "keyword": "1",
+      "description": "Test Menu Gemma",
+      "url": "Masih dalam pengembangan"
+    }
+  ],
+  "tb_users": [
+    {
+      "id": 1,
+      "username": "admin",
+      "password": "$2b$10$Kk8Fh9A./iGtxolsboJcN.VDgILeOvCu2WkjTdUWHigG4XXls4uC2",
+      "email": "admin@waku.local",
+      "full_name": "Administrator",
+      "role": "admin",
+      "is_active": 1,
+      "created_at": "2025-10-16T10:03:45.024Z",
+      "updated_at": "2025-10-16T10:03:45.024Z",
+      "last_login": "2025-10-16T10:38:50.716Z"
+    },
+    {
+      "id": 2,
+      "username": "user",
+      "password": "$2b$10$Kk8Fh9A./iGtxolsboJcN.VDgILeOvCu2WkjTdUWHigG4XXls4uC2",
+      "email": "user@waku.local",
+      "full_name": "Regular User",
+      "role": "user",
+      "is_active": 1,
+      "created_at": "2025-10-16T10:03:45.024Z",
+      "updated_at": "2025-10-16T10:03:45.024Z",
+      "last_login": null
+    }
+  ]
+}

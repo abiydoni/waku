@@ -1890,19 +1890,25 @@ app.get("/api/users", async (req, res) => {
     const connected = await dbHandler.connect();
 
     if (!connected) {
-      return res
-        .status(500)
-        .json({ error: "SQLite database connection failed" });
+      return res.status(500).json({ error: "JSON database connection failed" });
     }
 
-    const stmt = dbHandler.db.prepare(`
-      SELECT id, username, email, full_name, role, is_active, created_at, updated_at, last_login 
-      FROM tb_users 
-      ORDER BY created_at DESC
-    `);
-    const rows = stmt.all();
+    // Get users from JSON database
+    const users = dbHandler.data.tb_users
+      .map((user) => ({
+        id: user.id,
+        username: user.username,
+        email: user.email,
+        full_name: user.full_name,
+        role: user.role,
+        is_active: user.is_active,
+        created_at: user.created_at,
+        updated_at: user.updated_at,
+        last_login: user.last_login,
+      }))
+      .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
-    res.json(rows);
+    res.json(users);
   } catch (error) {
     console.error("Error fetching users:", error);
     res.status(500).json({ error: "Failed to fetch users" });
@@ -1924,10 +1930,9 @@ app.post("/api/users", async (req, res) => {
     await dbHandler.connect();
 
     // Check if username already exists
-    const checkStmt = dbHandler.db.prepare(
-      "SELECT id FROM tb_users WHERE username = ?"
+    const existingUser = dbHandler.data.tb_users.find(
+      (user) => user.username === username
     );
-    const existingUser = checkStmt.get(username);
 
     if (existingUser) {
       return res.status(400).json({ error: "Username already exists" });
@@ -1937,21 +1942,29 @@ app.post("/api/users", async (req, res) => {
     const bcrypt = await import("bcrypt");
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    const stmt = dbHandler.db.prepare(`
-      INSERT INTO tb_users (username, password, email, full_name, role, is_active) 
-      VALUES (?, ?, ?, ?, ?, 1)
-    `);
-    const result = stmt.run(
+    // Generate new ID
+    const newId = Math.max(...dbHandler.data.tb_users.map((u) => u.id), 0) + 1;
+
+    // Create new user
+    const newUser = {
+      id: newId,
       username,
-      hashedPassword,
-      email || null,
-      full_name || null,
-      role
-    );
+      password: hashedPassword,
+      email: email || null,
+      full_name: full_name || null,
+      role,
+      is_active: 1,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      last_login: null,
+    };
+
+    dbHandler.data.tb_users.push(newUser);
+    await dbHandler.saveData();
 
     res.json({
       success: true,
-      id: result.lastInsertRowid,
+      id: newId,
       message: "User created successfully",
     });
   } catch (error) {
@@ -1973,33 +1986,36 @@ app.put("/api/users/:id", async (req, res) => {
     const dbHandler = new SQLiteDatabaseHandler();
     await dbHandler.connect();
 
-    // Check if username already exists (excluding current user)
-    const checkStmt = dbHandler.db.prepare(
-      "SELECT id FROM tb_users WHERE username = ? AND id != ?"
+    // Find user by ID
+    const userIndex = dbHandler.data.tb_users.findIndex(
+      (user) => user.id === parseInt(id)
     );
-    const existingUser = checkStmt.get(username, id);
+
+    if (userIndex === -1) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    // Check if username already exists (excluding current user)
+    const existingUser = dbHandler.data.tb_users.find(
+      (user) => user.username === username && user.id !== parseInt(id)
+    );
 
     if (existingUser) {
       return res.status(400).json({ error: "Username already exists" });
     }
 
-    const stmt = dbHandler.db.prepare(`
-      UPDATE tb_users 
-      SET username = ?, email = ?, full_name = ?, role = ?, is_active = ?, updated_at = CURRENT_TIMESTAMP 
-      WHERE id = ?
-    `);
-    const result = stmt.run(
+    // Update user
+    dbHandler.data.tb_users[userIndex] = {
+      ...dbHandler.data.tb_users[userIndex],
       username,
-      email || null,
-      full_name || null,
-      role || "user",
-      is_active ? 1 : 0,
-      id
-    );
+      email: email || null,
+      full_name: full_name || null,
+      role: role || "user",
+      is_active: is_active ? 1 : 0,
+      updated_at: new Date().toISOString(),
+    };
 
-    if (result.changes === 0) {
-      return res.status(404).json({ error: "User not found" });
-    }
+    await dbHandler.saveData();
 
     res.json({
       success: true,
@@ -2024,20 +2040,27 @@ app.put("/api/users/:id/password", async (req, res) => {
     const dbHandler = new SQLiteDatabaseHandler();
     await dbHandler.connect();
 
+    // Find user by ID
+    const userIndex = dbHandler.data.tb_users.findIndex(
+      (user) => user.id === parseInt(id)
+    );
+
+    if (userIndex === -1) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
     // Hash password
     const bcrypt = await import("bcrypt");
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    const stmt = dbHandler.db.prepare(`
-      UPDATE tb_users 
-      SET password = ?, updated_at = CURRENT_TIMESTAMP 
-      WHERE id = ?
-    `);
-    const result = stmt.run(hashedPassword, id);
+    // Update password
+    dbHandler.data.tb_users[userIndex] = {
+      ...dbHandler.data.tb_users[userIndex],
+      password: hashedPassword,
+      updated_at: new Date().toISOString(),
+    };
 
-    if (result.changes === 0) {
-      return res.status(404).json({ error: "User not found" });
-    }
+    await dbHandler.saveData();
 
     res.json({
       success: true,
@@ -2057,26 +2080,25 @@ app.delete("/api/users/:id", async (req, res) => {
     const dbHandler = new SQLiteDatabaseHandler();
     await dbHandler.connect();
 
-    // Prevent deleting admin user
-    const checkStmt = dbHandler.db.prepare(
-      "SELECT username FROM tb_users WHERE id = ?"
+    // Find user by ID
+    const userIndex = dbHandler.data.tb_users.findIndex(
+      (user) => user.id === parseInt(id)
     );
-    const user = checkStmt.get(id);
 
-    if (!user) {
+    if (userIndex === -1) {
       return res.status(404).json({ error: "User not found" });
     }
 
+    const user = dbHandler.data.tb_users[userIndex];
+
+    // Prevent deleting admin user
     if (user.username === "admin") {
       return res.status(400).json({ error: "Cannot delete admin user" });
     }
 
-    const stmt = dbHandler.db.prepare("DELETE FROM tb_users WHERE id = ?");
-    const result = stmt.run(id);
-
-    if (result.changes === 0) {
-      return res.status(404).json({ error: "User not found" });
-    }
+    // Remove user from array
+    dbHandler.data.tb_users.splice(userIndex, 1);
+    await dbHandler.saveData();
 
     res.json({
       success: true,
@@ -2102,12 +2124,8 @@ app.post("/api/auth/login", async (req, res) => {
     const dbHandler = new SQLiteDatabaseHandler();
     await dbHandler.connect();
 
-    const stmt = dbHandler.db.prepare(`
-      SELECT id, username, password, email, full_name, role, is_active 
-      FROM tb_users 
-      WHERE username = ?
-    `);
-    const user = stmt.get(username);
+    // Find user by username
+    const user = dbHandler.data.tb_users.find((u) => u.username === username);
 
     if (!user) {
       return res.status(401).json({ error: "Invalid credentials" });
@@ -2126,10 +2144,16 @@ app.post("/api/auth/login", async (req, res) => {
     }
 
     // Update last login
-    const updateStmt = dbHandler.db.prepare(
-      "UPDATE tb_users SET last_login = CURRENT_TIMESTAMP WHERE id = ?"
+    const userIndex = dbHandler.data.tb_users.findIndex(
+      (u) => u.id === user.id
     );
-    updateStmt.run(user.id);
+    if (userIndex !== -1) {
+      dbHandler.data.tb_users[userIndex] = {
+        ...dbHandler.data.tb_users[userIndex],
+        last_login: new Date().toISOString(),
+      };
+      await dbHandler.saveData();
+    }
 
     // Set session cookie
     res.cookie("authToken", "wa-gateway-auth-2024", {
@@ -2179,12 +2203,8 @@ app.get("/api/auth/me", async (req, res) => {
     const dbHandler = new SQLiteDatabaseHandler();
     await dbHandler.connect();
 
-    const stmt = dbHandler.db.prepare(`
-      SELECT id, username, email, full_name, role, is_active, created_at, last_login 
-      FROM tb_users 
-      WHERE username = ?
-    `);
-    const user = stmt.get(username);
+    // Find user by username
+    const user = dbHandler.data.tb_users.find((u) => u.username === username);
 
     if (!user) {
       return res.status(401).json({ error: "User not found" });
@@ -2229,12 +2249,8 @@ app.post("/login", async (req, res) => {
     const dbHandler = new SQLiteDatabaseHandler();
     await dbHandler.connect();
 
-    const stmt = dbHandler.db.prepare(`
-      SELECT id, username, password, email, full_name, role, is_active 
-      FROM tb_users 
-      WHERE username = ?
-    `);
-    const user = stmt.get(username);
+    // Find user by username
+    const user = dbHandler.data.tb_users.find((u) => u.username === username);
 
     if (!user) {
       return res.render("login", { error: "Invalid credentials" });
@@ -2253,10 +2269,16 @@ app.post("/login", async (req, res) => {
     }
 
     // Update last login
-    const updateStmt = dbHandler.db.prepare(
-      "UPDATE tb_users SET last_login = CURRENT_TIMESTAMP WHERE id = ?"
+    const userIndex = dbHandler.data.tb_users.findIndex(
+      (u) => u.id === user.id
     );
-    updateStmt.run(user.id);
+    if (userIndex !== -1) {
+      dbHandler.data.tb_users[userIndex] = {
+        ...dbHandler.data.tb_users[userIndex],
+        last_login: new Date().toISOString(),
+      };
+      await dbHandler.saveData();
+    }
 
     // Set session cookie
     res.cookie("authToken", "wa-gateway-auth-2024", {
@@ -2293,17 +2315,20 @@ app.get("/api/menus", async (req, res) => {
     const connected = await dbHandler.connect();
 
     if (!connected) {
-      return res
-        .status(500)
-        .json({ error: "SQLite database connection failed" });
+      return res.status(500).json({ error: "JSON database connection failed" });
     }
 
-    const stmt = dbHandler.db.prepare(
-      "SELECT id, name, remark, time_stamp FROM tb_menu ORDER BY id ASC"
-    );
-    const rows = stmt.all();
+    // Get menus from JSON database
+    const menus = dbHandler.data.tb_menu
+      .map((menu) => ({
+        id: menu.id,
+        name: menu.name,
+        remark: menu.remark,
+        time_stamp: menu.time_stamp,
+      }))
+      .sort((a, b) => a.id - b.id);
 
-    res.json(rows);
+    res.json(menus);
   } catch (error) {
     console.error("Error fetching menus:", error);
     res.status(500).json({ error: "Failed to fetch menus" });
@@ -2322,14 +2347,23 @@ app.post("/api/menus", async (req, res) => {
     const dbHandler = new SQLiteDatabaseHandler();
     await dbHandler.connect();
 
-    const stmt = dbHandler.db.prepare(
-      "INSERT INTO tb_menu (name, remark) VALUES (?, ?)"
-    );
-    const result = stmt.run(name, remark);
+    // Generate new ID
+    const newId = Math.max(...dbHandler.data.tb_menu.map((m) => m.id), 0) + 1;
+
+    // Create new menu
+    const newMenu = {
+      id: newId,
+      name,
+      remark,
+      time_stamp: new Date().toISOString(),
+    };
+
+    dbHandler.data.tb_menu.push(newMenu);
+    await dbHandler.saveData();
 
     res.json({
       success: true,
-      id: result.lastInsertRowid,
+      id: newId,
       message: "Menu created successfully",
     });
   } catch (error) {
@@ -2351,14 +2385,23 @@ app.put("/api/menus/:id", async (req, res) => {
     const dbHandler = new SQLiteDatabaseHandler();
     await dbHandler.connect();
 
-    const stmt = dbHandler.db.prepare(
-      "UPDATE tb_menu SET name = ?, remark = ? WHERE id = ?"
+    // Find menu by ID
+    const menuIndex = dbHandler.data.tb_menu.findIndex(
+      (m) => m.id === parseInt(id)
     );
-    const result = stmt.run(name, remark, id);
 
-    if (result.changes === 0) {
+    if (menuIndex === -1) {
       return res.status(404).json({ error: "Menu not found" });
     }
+
+    // Update menu
+    dbHandler.data.tb_menu[menuIndex] = {
+      ...dbHandler.data.tb_menu[menuIndex],
+      name,
+      remark,
+    };
+
+    await dbHandler.saveData();
 
     res.json({
       success: true,
@@ -2379,23 +2422,28 @@ app.delete("/api/menus/:id", async (req, res) => {
     await dbHandler.connect();
 
     // Check if menu is being used by bot menus
-    const checkStmt = dbHandler.db.prepare(
-      "SELECT COUNT(*) as count FROM tb_botmenu WHERE menu_id = ?"
-    );
-    const botMenus = checkStmt.get(id);
+    const botMenusCount = dbHandler.data.tb_botmenu.filter(
+      (bm) => bm.menu_id === parseInt(id)
+    ).length;
 
-    if (botMenus.count > 0) {
+    if (botMenusCount > 0) {
       return res.status(400).json({
         error: "Cannot delete menu. It is being used by bot menus.",
       });
     }
 
-    const stmt = dbHandler.db.prepare("DELETE FROM tb_menu WHERE id = ?");
-    const result = stmt.run(id);
+    // Find menu by ID
+    const menuIndex = dbHandler.data.tb_menu.findIndex(
+      (m) => m.id === parseInt(id)
+    );
 
-    if (result.changes === 0) {
+    if (menuIndex === -1) {
       return res.status(404).json({ error: "Menu not found" });
     }
+
+    // Remove menu from array
+    dbHandler.data.tb_menu.splice(menuIndex, 1);
+    await dbHandler.saveData();
 
     res.json({
       success: true,
@@ -2414,19 +2462,27 @@ app.get("/api/botmenus", async (req, res) => {
     const connected = await dbHandler.connect();
 
     if (!connected) {
-      return res
-        .status(500)
-        .json({ error: "SQLite database connection failed" });
+      return res.status(500).json({ error: "JSON database connection failed" });
     }
 
-    const stmt = dbHandler.db.prepare(`
-      SELECT id, menu_id, parent_id, keyword, description, url 
-      FROM tb_botmenu 
-      ORDER BY menu_id ASC, parent_id ASC, keyword ASC
-    `);
-    const rows = stmt.all();
+    // Get botmenus from JSON database
+    const botmenus = dbHandler.data.tb_botmenu
+      .map((botmenu) => ({
+        id: botmenu.id,
+        menu_id: botmenu.menu_id,
+        parent_id: botmenu.parent_id,
+        keyword: botmenu.keyword,
+        description: botmenu.description,
+        url: botmenu.url,
+      }))
+      .sort((a, b) => {
+        if (a.menu_id !== b.menu_id) return a.menu_id - b.menu_id;
+        if (a.parent_id !== b.parent_id)
+          return (a.parent_id || 0) - (b.parent_id || 0);
+        return a.keyword.localeCompare(b.keyword);
+      });
 
-    res.json(rows);
+    res.json(botmenus);
   } catch (error) {
     console.error("Error fetching bot menus:", error);
     res.status(500).json({ error: "Failed to fetch bot menus" });
@@ -2448,39 +2504,56 @@ app.post("/api/botmenus", async (req, res) => {
     await dbHandler.connect();
 
     // Check if menu_id exists
-    const menuCheck = dbHandler.db
-      .prepare("SELECT id FROM tb_menu WHERE id = ?")
-      .get(menu_id);
+    const menuExists = dbHandler.data.tb_menu.some(
+      (m) => m.id === parseInt(menu_id)
+    );
 
-    if (!menuCheck) {
+    if (!menuExists) {
       return res.status(400).json({ error: "Menu ID does not exist" });
     }
 
     // Check if parent_id exists (if provided)
     if (parent_id) {
-      const parentCheck = dbHandler.db
-        .prepare("SELECT id FROM tb_botmenu WHERE id = ?")
-        .get(parent_id);
+      const parentExists = dbHandler.data.tb_botmenu.some(
+        (bm) => bm.id === parseInt(parent_id)
+      );
 
-      if (!parentCheck) {
+      if (!parentExists) {
         return res.status(400).json({ error: "Parent ID does not exist" });
       }
     }
 
-    const stmt = dbHandler.db.prepare(
-      "INSERT INTO tb_botmenu (menu_id, parent_id, keyword, description, url) VALUES (?, ?, ?, ?, ?)"
+    // Check if keyword already exists for the same menu_id
+    const keywordExists = dbHandler.data.tb_botmenu.some(
+      (bm) => bm.keyword === keyword && bm.menu_id === parseInt(menu_id)
     );
-    const result = stmt.run(
-      menu_id,
-      parent_id || null,
+
+    if (keywordExists) {
+      return res
+        .status(400)
+        .json({ error: "Keyword already exists for this menu" });
+    }
+
+    // Generate new ID
+    const newId =
+      Math.max(...dbHandler.data.tb_botmenu.map((bm) => bm.id), 0) + 1;
+
+    // Create new botmenu
+    const newBotmenu = {
+      id: newId,
+      menu_id: parseInt(menu_id),
+      parent_id: parent_id ? parseInt(parent_id) : null,
       keyword,
       description,
-      url || null
-    );
+      url: url || null,
+    };
+
+    dbHandler.data.tb_botmenu.push(newBotmenu);
+    await dbHandler.saveData();
 
     res.json({
       success: true,
-      id: result.lastInsertRowid,
+      id: newId,
       message: "Bot menu created successfully",
     });
   } catch (error) {
@@ -2505,40 +2578,59 @@ app.put("/api/botmenus/:id", async (req, res) => {
     await dbHandler.connect();
 
     // Check if menu_id exists
-    const menuCheck = dbHandler.db
-      .prepare("SELECT id FROM tb_menu WHERE id = ?")
-      .get(menu_id);
+    const menuExists = dbHandler.data.tb_menu.some(
+      (m) => m.id === parseInt(menu_id)
+    );
 
-    if (!menuCheck) {
+    if (!menuExists) {
       return res.status(400).json({ error: "Menu ID does not exist" });
     }
 
     // Check if parent_id exists (if provided)
     if (parent_id) {
-      const parentCheck = dbHandler.db
-        .prepare("SELECT id FROM tb_botmenu WHERE id = ? AND id != ?")
-        .get(parent_id, id);
+      const parentExists = dbHandler.data.tb_botmenu.some(
+        (bm) => bm.id === parseInt(parent_id) && bm.id !== parseInt(id)
+      );
 
-      if (!parentCheck) {
+      if (!parentExists) {
         return res.status(400).json({ error: "Parent ID does not exist" });
       }
     }
 
-    const stmt = dbHandler.db.prepare(
-      "UPDATE tb_botmenu SET menu_id = ?, parent_id = ?, keyword = ?, description = ?, url = ? WHERE id = ?"
-    );
-    const result = stmt.run(
-      menu_id,
-      parent_id || null,
-      keyword,
-      description,
-      url || null,
-      id
+    // Check if keyword already exists for the same menu_id (excluding current botmenu)
+    const keywordExists = dbHandler.data.tb_botmenu.some(
+      (bm) =>
+        bm.keyword === keyword &&
+        bm.menu_id === parseInt(menu_id) &&
+        bm.id !== parseInt(id)
     );
 
-    if (result.changes === 0) {
+    if (keywordExists) {
+      return res
+        .status(400)
+        .json({ error: "Keyword already exists for this menu" });
+    }
+
+    // Find botmenu by ID
+    const botmenuIndex = dbHandler.data.tb_botmenu.findIndex(
+      (bm) => bm.id === parseInt(id)
+    );
+
+    if (botmenuIndex === -1) {
       return res.status(404).json({ error: "Bot menu not found" });
     }
+
+    // Update botmenu
+    dbHandler.data.tb_botmenu[botmenuIndex] = {
+      ...dbHandler.data.tb_botmenu[botmenuIndex],
+      menu_id: parseInt(menu_id),
+      parent_id: parent_id ? parseInt(parent_id) : null,
+      keyword,
+      description,
+      url: url || null,
+    };
+
+    await dbHandler.saveData();
 
     res.json({
       success: true,
@@ -2559,23 +2651,28 @@ app.delete("/api/botmenus/:id", async (req, res) => {
     await dbHandler.connect();
 
     // Check if this bot menu has children
-    const checkStmt = dbHandler.db.prepare(
-      "SELECT COUNT(*) as count FROM tb_botmenu WHERE parent_id = ?"
-    );
-    const children = checkStmt.get(id);
+    const childrenCount = dbHandler.data.tb_botmenu.filter(
+      (bm) => bm.parent_id === parseInt(id)
+    ).length;
 
-    if (children.count > 0) {
+    if (childrenCount > 0) {
       return res.status(400).json({
         error: "Cannot delete bot menu. It has child menus.",
       });
     }
 
-    const stmt = dbHandler.db.prepare("DELETE FROM tb_botmenu WHERE id = ?");
-    const result = stmt.run(id);
+    // Find botmenu by ID
+    const botmenuIndex = dbHandler.data.tb_botmenu.findIndex(
+      (bm) => bm.id === parseInt(id)
+    );
 
-    if (result.changes === 0) {
+    if (botmenuIndex === -1) {
       return res.status(404).json({ error: "Bot menu not found" });
     }
+
+    // Remove botmenu from array
+    dbHandler.data.tb_botmenu.splice(botmenuIndex, 1);
+    await dbHandler.saveData();
 
     res.json({
       success: true,
