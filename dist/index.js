@@ -238,12 +238,11 @@ class BotHandler {
         return;
       }
 
-      // Skip jika pesan dari group (sesuai dengan logic yang sudah ada)
+      // Allow group messages (remove group blocking)
       if (from.includes("@g.us")) {
         console.log(
-          `🚫 Bot blocked for ${sessionId} - message from group: ${from}`
+          `👥 Processing group message for ${sessionId} from group: ${from}`
         );
-        return;
       }
 
       // Skip jika pesan dari bot sendiri
@@ -1856,16 +1855,30 @@ app.post("/api/cleanupContact", async (req, res) => {
 app.post("/api/sendMessage", async (req, res) => {
   const { sessionId, to, message, isGroup } = req.body;
 
+  console.log(`📤 SendMessage API called:`, {
+    sessionId,
+    to,
+    message,
+    isGroup,
+  });
+
   if (!sessionId || !to || !message) {
+    console.log(`❌ Missing parameters:`, { sessionId, to, message });
     return res.json({ error: "Missing required parameters" });
   }
 
   if (!sessions[sessionId] || sessions[sessionId].status !== "connected") {
+    console.log(`❌ Session not connected:`, {
+      sessionId,
+      exists: !!sessions[sessionId],
+      status: sessions[sessionId]?.status,
+    });
     return res.json({ error: "Session not connected" });
   }
 
   try {
     const jid = isGroup ? to : to + "@s.whatsapp.net";
+    console.log(`📱 Sending message to JID: ${jid} (isGroup: ${isGroup})`);
 
     // Retry mechanism for sending messages
     let retries = 3;
@@ -1873,6 +1886,9 @@ app.post("/api/sendMessage", async (req, res) => {
 
     while (retries > 0) {
       try {
+        console.log(
+          `🔄 Attempting to send message (attempt ${4 - retries}/3) to ${jid}`
+        );
         await sessions[sessionId].sock.sendMessage(jid, { text: message });
         console.log(`✅ Message sent successfully to ${jid} via ${sessionId}`);
         return res.json({ success: true });
@@ -1880,6 +1896,7 @@ app.post("/api/sendMessage", async (req, res) => {
         lastError = err;
         retries--;
         console.log(`⚠️ Send message failed (${3 - retries}/3):`, err.message);
+        console.log(`🔍 Error details:`, err);
 
         if (retries > 0) {
           // Wait 1 second before retry
