@@ -435,6 +435,20 @@ async function cleanupProblematicSession(sessionId, contactJid) {
         console.log(`✅ Decryption attempts cleared for ${contactJid}`);
       }
 
+      // Additional cleanup for Bad MAC errors
+      try {
+        // Force refresh session state
+        if (session.sock.refreshSession) {
+          await session.sock.refreshSession(contactJid);
+          console.log(`✅ Session refreshed for ${contactJid}`);
+        }
+      } catch (refreshError) {
+        console.log(
+          `⚠️ Session refresh failed for ${contactJid}:`,
+          refreshError.message
+        );
+      }
+
       console.log(`✅ Session cleanup completed for ${contactJid}`);
     } else {
       console.log(`⚠️ No valid session found for cleanup: ${sessionId}`);
@@ -445,6 +459,41 @@ async function cleanupProblematicSession(sessionId, contactJid) {
       error.message
     );
     // Don't throw the error, just log it to prevent cascading failures
+  }
+}
+
+// --- Function to manually clear problematic session data ---
+async function clearProblematicSessionData(sessionId, contactJid) {
+  try {
+    console.log(
+      `🧹 Manually clearing session data for ${contactJid} in ${sessionId}`
+    );
+
+    const session = sessions[sessionId];
+    if (session && session.sock) {
+      // Clear session data
+      if (session.sock.clearSessionData) {
+        await session.sock.clearSessionData(contactJid);
+        console.log(`✅ Session data cleared for ${contactJid}`);
+      }
+
+      // Clear local tracking
+      if (session.decryptionAttempts) {
+        session.decryptionAttempts.delete(contactJid);
+      }
+
+      // Clear last decryption attempt
+      if (session.lastDecryptionAttempt) {
+        delete session.lastDecryptionAttempt[contactJid];
+      }
+
+      console.log(`✅ Manual cleanup completed for ${contactJid}`);
+      return true;
+    }
+    return false;
+  } catch (error) {
+    console.error(`❌ Manual cleanup failed for ${contactJid}:`, error.message);
+    return false;
   }
 }
 
@@ -945,11 +994,42 @@ async function initSession(sessionId) {
           if (
             decryptError.message.includes("PreKeyError") ||
             decryptError.message.includes("Invalid PreKey ID") ||
-            decryptError.message.includes("No session found")
+            decryptError.message.includes("No session found") ||
+            decryptError.message.includes("Bad MAC")
           ) {
             console.log(
-              `🔄 PreKey/Session error detected for ${contactJid}, attempting recovery...`
+              `🔄 PreKey/Session/Bad MAC error detected for ${contactJid}, attempting recovery...`
             );
+
+            // Special handling for Bad MAC error
+            if (decryptError.message.includes("Bad MAC")) {
+              console.log(
+                `🔐 Bad MAC detected - clearing corrupted session data for ${contactJid}`
+              );
+
+              // Force clear session data for this specific contact
+              try {
+                if (session.sock.clearSessionData) {
+                  await session.sock.clearSessionData(contactJid);
+                  console.log(
+                    `✅ Session data forcefully cleared for ${contactJid}`
+                  );
+                }
+
+                // Clear from local session tracking
+                if (session.decryptionAttempts) {
+                  session.decryptionAttempts.delete(contactJid);
+                }
+
+                // Wait longer for Bad MAC recovery
+                await new Promise((resolve) => setTimeout(resolve, 3000));
+              } catch (clearError) {
+                console.log(
+                  `⚠️ Failed to clear session data for Bad MAC:`,
+                  clearError.message
+                );
+              }
+            }
 
             // Enhanced cleanup with better error handling
             try {
@@ -1784,6 +1864,45 @@ app.post("/api/botSettings/:sessionId/reset", (req, res) => {
     settings: botSettings[sessionId],
     message: `Bot settings reset to ${botType} type`,
   });
+});
+
+// API: Clear problematic session data
+app.post("/api/session/:sessionId/clearData", async (req, res) => {
+  const { sessionId } = req.params;
+  const { contactJid } = req.body;
+
+  console.log(`🧹 Clearing session data for ${contactJid} in ${sessionId}`);
+
+  if (!sessionId) {
+    return res.json({ error: "No sessionId provided" });
+  }
+
+  if (!contactJid) {
+    return res.json({ error: "No contactJid provided" });
+  }
+
+  try {
+    const success = await clearProblematicSessionData(sessionId, contactJid);
+
+    if (success) {
+      res.json({
+        success: true,
+        message: `Session data cleared for ${contactJid}`,
+        contactJid: contactJid,
+      });
+    } else {
+      res.json({
+        success: false,
+        error: "Failed to clear session data",
+      });
+    }
+  } catch (error) {
+    console.error(`❌ Error clearing session data:`, error);
+    res.json({
+      success: false,
+      error: error.message,
+    });
+  }
 });
 
 // API: Get QR Code
