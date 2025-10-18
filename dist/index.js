@@ -1,4 +1,6 @@
 console.log("🚀 Starting WA Gateway Server...");
+console.log("📊 Node.js version:", process.version);
+console.log("📊 Current directory:", process.cwd());
 
 import express from "express";
 import path from "path";
@@ -16,7 +18,7 @@ import SQLiteDatabaseHandler from "./SQLiteDatabaseHandler.js";
 console.log("✅ All imports loaded successfully");
 
 const app = express();
-const PORT = process.env.PORT || 4005;
+const PORT = process.env.PORT || 4006;
 const HOST = process.env.HOST || "localhost";
 
 // Middleware
@@ -209,12 +211,19 @@ class BotHandler {
   }
 
   async initializeDatabase() {
+    console.log("🔄 Initializing database connection...");
     const connected = await this.dbHandler.connect();
     if (!connected) {
       console.error("❌ Failed to connect to SQLite database");
     } else {
+      console.log("✅ Database connected successfully");
       // Setup database tables and sample data
-      await this.dbHandler.setupDatabase();
+      try {
+        await this.dbHandler.setupDatabase();
+        console.log("✅ Database setup completed");
+      } catch (setupError) {
+        console.error("❌ Database setup failed:", setupError.message);
+      }
     }
   }
 
@@ -287,31 +296,49 @@ class BotHandler {
     try {
       console.log(`🤖 Calling Database Handler: ${action}`, data);
 
+      // Ensure database connection
+      const connected = await this.dbHandler.connect();
+      if (!connected) {
+        console.error("❌ Database not connected in callBotAPI");
+        return {
+          success: false,
+          message: "Database not connected",
+          error: "Database connection failed",
+        };
+      }
+
       switch (action) {
         case "menu":
+          console.log("📋 Getting main menu response...");
           const menuResponse = await this.dbHandler.getMainMenuResponse();
+          console.log("📋 Menu response:", menuResponse);
           return { success: true, response: menuResponse };
 
         case "process":
+          console.log("🔄 Processing message:", data.message);
           const processResponse = await this.dbHandler.processMessage(
             data.message
           );
+          console.log("🔄 Process response:", processResponse);
           return { success: true, response: processResponse };
 
         case "search":
+          console.log("🔍 Searching for:", data.search_term);
           const searchResults = await this.dbHandler.searchMenuByDescription(
             data.search_term
           );
           const searchResponse = await this.dbHandler.formatSearchResults(
             searchResults
           );
+          console.log("🔍 Search response:", searchResponse);
           return { success: true, response: searchResponse };
 
         default:
           return { success: false, message: "Unknown action" };
       }
     } catch (error) {
-      console.error("Database handler call failed:", error.message);
+      console.error("❌ Database handler call failed:", error.message);
+      console.error("❌ Error stack:", error.stack);
       return {
         success: false,
         message: "Database call failed",
@@ -522,11 +549,100 @@ async function processMessageWithBot(sessionId, from, messageText, settings) {
 
     // Send response back to user using the session's socket
     const session = sessions[sessionId];
+    console.log(`🔍 Debug: Session ${sessionId} exists:`, !!session);
+    console.log(
+      `🔍 Debug: Session socket exists:`,
+      !!(session && session.sock)
+    );
+    console.log(`🔍 Debug: Session status:`, session?.status);
+    console.log(`🔍 Debug: Bot response to send:`, botResponse);
+
     if (session && session.sock) {
-      await session.sock.sendMessage(from, { text: botResponse });
-      console.log(`✅ Bot response sent to ${from} via session ${sessionId}`);
+      try {
+        // Check if socket is still connected
+        if (session.sock.user && session.sock.user.id) {
+          const sendResult = await session.sock.sendMessage(from, {
+            text: botResponse,
+          });
+          console.log(
+            `✅ Bot response sent to ${from} via session ${sessionId}`
+          );
+          console.log(`📤 Send result:`, sendResult);
+
+          // Send acknowledgment after successful message send
+          try {
+            if (msg.key && msg.key.id && msg.key.remoteJid) {
+              await session.sock.sendMessageAck(msg.key, "read");
+              console.log(`✅ Final acknowledgment sent for ${from}`);
+            }
+          } catch (ackError) {
+            console.log(`⚠️ Final acknowledgment failed:`, ackError.message);
+          }
+        } else {
+          console.log(`⚠️ Socket not properly connected, attempting fallback`);
+          throw new Error("Socket not connected");
+        }
+      } catch (sendError) {
+        console.error(
+          `❌ Failed to send bot response to ${from}:`,
+          sendError.message
+        );
+        console.error(`❌ Send error details:`, sendError);
+
+        // Fallback: Try to send via API endpoint
+        try {
+          console.log(`🔄 Attempting fallback send via API for ${from}`);
+          const response = await fetch(
+            `http://localhost:4006/api/sendMessage`,
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                sessionId: sessionId,
+                to: from.replace("@s.whatsapp.net", ""),
+                message: botResponse,
+              }),
+            }
+          );
+
+          if (response.ok) {
+            console.log(`✅ Fallback response sent successfully to ${from}`);
+          } else {
+            console.error(`❌ Fallback send failed:`, await response.text());
+          }
+        } catch (fallbackError) {
+          console.error(`❌ Fallback send error:`, fallbackError.message);
+        }
+      }
     } else {
       console.error(`❌ No socket found for session ${sessionId}`);
+      console.error(`❌ Session details:`, session);
+
+      // Fallback: Try to send via API endpoint even without socket
+      try {
+        console.log(`🔄 Attempting API fallback send for ${from}`);
+        const response = await fetch(`http://localhost:4006/api/sendMessage`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            sessionId: sessionId,
+            to: from.replace("@s.whatsapp.net", ""),
+            message: botResponse,
+          }),
+        });
+
+        if (response.ok) {
+          console.log(`✅ API fallback response sent successfully to ${from}`);
+        } else {
+          console.error(`❌ API fallback send failed:`, await response.text());
+        }
+      } catch (apiError) {
+        console.error(`❌ API fallback send error:`, apiError.message);
+      }
     }
   } catch (error) {
     console.error(
@@ -575,6 +691,12 @@ async function generateBotResponse(messageText, settings) {
   ) {
     // Call bot menu API to get menu
     console.log("🤖 Calling menu API for:", lowerText);
+    console.log("🤖 BotHandler exists:", !!botHandler);
+    console.log(
+      "🤖 BotHandler callBotAPI method exists:",
+      typeof botHandler.callBotAPI
+    );
+
     try {
       const response = await botHandler.callBotAPI("menu", {});
       console.log("🤖 Menu API response:", response);
@@ -590,6 +712,7 @@ async function generateBotResponse(messageText, settings) {
     } catch (error) {
       console.error("Error getting menu:", error);
       console.error("Error details:", error.message);
+      console.error("Error stack:", error.stack);
     }
     // Fallback response if API is not available
     return (
@@ -853,6 +976,16 @@ async function initSession(sessionId) {
         console.log(
           `✅ Session ${sessionId} connected successfully - Always Connected Mode Active`
         );
+
+        // Force update session status to ensure it's properly marked as connected
+        setTimeout(() => {
+          if (sessions[sessionId] && sessions[sessionId].sock) {
+            sessions[sessionId].status = "connected";
+            console.log(
+              `🔄 Force-updated session ${sessionId} status to connected`
+            );
+          }
+        }, 1000);
       }
 
       if (connection === "close") {
@@ -865,8 +998,22 @@ async function initSession(sessionId) {
         const disconnectCode = lastDisconnect?.error?.output?.statusCode;
         console.log(`📊 Disconnect reason for ${sessionId}:`, disconnectCode);
 
-        // Always attempt to reconnect for any disconnect reason (except logged out)
-        if (disconnectCode !== DisconnectReason.loggedOut) {
+        // Handle specific disconnect reasons
+        if (disconnectCode === 440) {
+          console.log(
+            `🚫 Session ${sessionId} stream error (440), attempting reconnection`
+          );
+          // For stream errors, try to reconnect immediately
+          setTimeout(() => {
+            if (sessions[sessionId] && !sessions[sessionId].deleted) {
+              sessions[sessionId].reconnecting = true;
+              initSession(sessionId).catch((err) => {
+                console.error(`❌ Reconnection failed for ${sessionId}:`, err);
+                sessions[sessionId].reconnecting = false;
+              });
+            }
+          }, 5000);
+        } else if (disconnectCode !== DisconnectReason.loggedOut) {
           // Add a flag to prevent multiple reconnection attempts
           if (sessions[sessionId] && !sessions[sessionId].reconnecting) {
             sessions[sessionId].reconnecting = true;
@@ -923,10 +1070,33 @@ async function initSession(sessionId) {
         return;
       }
 
+      // Continue with message processing
+      if (!m.messages) return;
+
       // Guard: Check if session is connected
-      if (!sessions[sessionId] || sessions[sessionId].status !== "connected") {
+      console.log(
+        `🔍 Debug: Checking session ${sessionId} status:`,
+        sessions[sessionId]?.status
+      );
+      console.log(`🔍 Debug: Session exists:`, !!sessions[sessionId]);
+      console.log(
+        `🔍 Debug: All session statuses:`,
+        Object.keys(sessions).map((id) => ({
+          id,
+          status: sessions[id]?.status,
+        }))
+      );
+
+      // More lenient connection check - allow processing if socket exists
+      if (
+        !sessions[sessionId] ||
+        (!sessions[sessionId].sock &&
+          sessions[sessionId].status !== "connected")
+      ) {
         console.log(
-          `🚫 Session ${sessionId} not connected, ignoring messages.`
+          `🚫 Session ${sessionId} not ready, ignoring messages. Status: ${
+            sessions[sessionId]?.status
+          }, Socket: ${!!sessions[sessionId]?.sock}`
         );
         return;
       }
@@ -943,6 +1113,38 @@ async function initSession(sessionId) {
           `🔒 Message from ${msg.key.remoteJid} is encrypted, attempting to decrypt...`
         );
 
+        // Send immediate response to show bot is working
+        try {
+          const session = sessions[sessionId];
+          if (session && session.sock) {
+            // Send immediate response first (more reliable)
+            await session.sock.sendMessage(msg.key.remoteJid, {
+              text: "🤖 Bot menerima pesan Anda. Sedang memproses...",
+            });
+            console.log(`📤 Sent immediate response to ${msg.key.remoteJid}`);
+
+            // Send acknowledgment immediately after response
+            try {
+              if (msg.key && msg.key.id && msg.key.remoteJid) {
+                await session.sock.sendMessageAck(msg.key, "read");
+                console.log(
+                  `✅ Immediate acknowledgment sent for ${msg.key.remoteJid}`
+                );
+              }
+            } catch (ackError) {
+              console.log(
+                `⚠️ Immediate acknowledgment failed:`,
+                ackError.message
+              );
+            }
+          }
+        } catch (responseError) {
+          console.log(
+            `⚠️ Failed to send immediate response to ${msg.key.remoteJid}:`,
+            responseError.message
+          );
+        }
+
         // Track decryption attempts per contact
         const contactJid = msg.key.remoteJid;
         if (!sessions[sessionId].decryptionAttempts) {
@@ -957,6 +1159,22 @@ async function initSession(sessionId) {
           console.log(
             `🚫 Max decryption attempts reached for ${contactJid}, skipping message`
           );
+
+          // Send final response to user
+          try {
+            const session = sessions[sessionId];
+            if (session && session.sock) {
+              await session.sock.sendMessage(contactJid, {
+                text: "🚫 Pesan tidak dapat diproses setelah 3 percobaan. Coba kirim ulang atau ketik 'menu'",
+              });
+              console.log(`📤 Sent max attempts response to ${contactJid}`);
+            }
+          } catch (finalError) {
+            console.log(
+              `⚠️ Failed to send max attempts response to ${contactJid}:`,
+              finalError.message
+            );
+          }
           return;
         }
 
@@ -973,6 +1191,24 @@ async function initSession(sessionId) {
             console.log(
               `⚠️ Failed to decrypt message from ${contactJid}, skipping...`
             );
+
+            // Send response to user about decryption failure
+            try {
+              const session = sessions[sessionId];
+              if (session && session.sock) {
+                await session.sock.sendMessage(contactJid, {
+                  text: "🔒 Pesan tidak dapat diproses. Coba kirim ulang atau ketik 'menu'",
+                });
+                console.log(
+                  `📤 Sent decryption failure response to ${contactJid}`
+                );
+              }
+            } catch (fallbackError) {
+              console.log(
+                `⚠️ Failed to send decryption failure response to ${contactJid}:`,
+                fallbackError.message
+              );
+            }
             return;
           }
         } catch (decryptError) {
@@ -989,6 +1225,22 @@ async function initSession(sessionId) {
             sessions[sessionId].lastDecryptionAttempt = {};
           }
           sessions[sessionId].lastDecryptionAttempt[contactJid] = Date.now();
+
+          // Send response to user about decryption error
+          try {
+            const session = sessions[sessionId];
+            if (session && session.sock) {
+              await session.sock.sendMessage(contactJid, {
+                text: "🔐 Masalah dekripsi pesan. Coba kirim ulang atau ketik 'menu'",
+              });
+              console.log(`📤 Sent decryption error response to ${contactJid}`);
+            }
+          } catch (notifyError) {
+            console.log(
+              `⚠️ Failed to send decryption error response to ${contactJid}:`,
+              notifyError.message
+            );
+          }
 
           // Handle specific decryption errors with enhanced recovery
           if (
@@ -1083,6 +1335,37 @@ async function initSession(sessionId) {
       if (isTextMessage && messageText.trim()) {
         try {
           const from = msg.key.remoteJid;
+
+          // Send immediate response to show bot is working
+          try {
+            const session = sessions[sessionId];
+            if (session && session.sock) {
+              // Send immediate response first (more reliable)
+              const immediateResult = await session.sock.sendMessage(from, {
+                text: "🤖 Bot menerima pesan Anda. Sedang memproses...",
+              });
+              console.log(`📤 Sent immediate response to ${from}`);
+              console.log(`📤 Immediate response result:`, immediateResult);
+
+              // Send acknowledgment immediately after response
+              try {
+                if (msg.key && msg.key.id && msg.key.remoteJid) {
+                  await session.sock.sendMessageAck(msg.key, "read");
+                  console.log(`✅ Immediate acknowledgment sent for ${from}`);
+                }
+              } catch (ackError) {
+                console.log(
+                  `⚠️ Immediate acknowledgment failed:`,
+                  ackError.message
+                );
+              }
+            }
+          } catch (responseError) {
+            console.log(
+              `⚠️ Failed to send immediate response:`,
+              responseError.message
+            );
+          }
 
           // Check if auto-reply is enabled for this session
           const settings = botSettings[sessionId];
@@ -2009,23 +2292,20 @@ app.get("/api/users", async (req, res) => {
     const connected = await dbHandler.connect();
 
     if (!connected) {
-      return res.status(500).json({ error: "JSON database connection failed" });
+      return res
+        .status(500)
+        .json({ error: "SQLite database connection failed" });
     }
 
-    // Get users from JSON database
-    const users = dbHandler.data.tb_users
-      .map((user) => ({
-        id: user.id,
-        username: user.username,
-        email: user.email,
-        full_name: user.full_name,
-        role: user.role,
-        is_active: user.is_active,
-        created_at: user.created_at,
-        updated_at: user.updated_at,
-        last_login: user.last_login,
-      }))
-      .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    // Get users from SQLite database
+    const users = dbHandler.db
+      .prepare(
+        `
+      SELECT * FROM tb_users 
+      ORDER BY created_at DESC
+    `
+      )
+      .all();
 
     res.json(users);
   } catch (error) {
@@ -2049,11 +2329,15 @@ app.post("/api/users", async (req, res) => {
     await dbHandler.connect();
 
     // Check if username already exists
-    const existingUser = dbHandler.data.tb_users.find(
-      (user) => user.username === username
-    );
+    const existingUser = dbHandler.db
+      .prepare(
+        `
+      SELECT COUNT(*) as count FROM tb_users WHERE username = ?
+    `
+      )
+      .get(username);
 
-    if (existingUser) {
+    if (existingUser.count > 0) {
       return res.status(400).json({ error: "Username already exists" });
     }
 
@@ -2061,29 +2345,29 @@ app.post("/api/users", async (req, res) => {
     const bcrypt = await import("bcrypt");
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // Generate new ID
-    const newId = Math.max(...dbHandler.data.tb_users.map((u) => u.id), 0) + 1;
-
-    // Create new user
-    const newUser = {
-      id: newId,
-      username,
-      password: hashedPassword,
-      email: email || null,
-      full_name: full_name || null,
-      role,
-      is_active: 1,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-      last_login: null,
-    };
-
-    dbHandler.data.tb_users.push(newUser);
-    await dbHandler.saveData();
+    // Create new user in SQLite
+    const result = dbHandler.db
+      .prepare(
+        `
+      INSERT INTO tb_users (username, password, email, full_name, role, is_active, created_at, updated_at, last_login) 
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `
+      )
+      .run(
+        username,
+        hashedPassword,
+        email || null,
+        full_name || null,
+        role,
+        1,
+        new Date().toISOString(),
+        new Date().toISOString(),
+        null
+      );
 
     res.json({
       success: true,
-      id: newId,
+      id: result.lastInsertRowid,
       message: "User created successfully",
     });
   } catch (error) {
@@ -2106,35 +2390,49 @@ app.put("/api/users/:id", async (req, res) => {
     await dbHandler.connect();
 
     // Find user by ID
-    const userIndex = dbHandler.data.tb_users.findIndex(
-      (user) => user.id === parseInt(id)
-    );
+    const user = dbHandler.db
+      .prepare(
+        `
+      SELECT * FROM tb_users WHERE id = ?
+    `
+      )
+      .get(parseInt(id));
 
-    if (userIndex === -1) {
+    if (!user) {
       return res.status(404).json({ error: "User not found" });
     }
 
     // Check if username already exists (excluding current user)
-    const existingUser = dbHandler.data.tb_users.find(
-      (user) => user.username === username && user.id !== parseInt(id)
-    );
+    const existingUser = dbHandler.db
+      .prepare(
+        `
+      SELECT COUNT(*) as count FROM tb_users WHERE username = ? AND id != ?
+    `
+      )
+      .get(username, parseInt(id));
 
-    if (existingUser) {
+    if (existingUser.count > 0) {
       return res.status(400).json({ error: "Username already exists" });
     }
 
-    // Update user
-    dbHandler.data.tb_users[userIndex] = {
-      ...dbHandler.data.tb_users[userIndex],
-      username,
-      email: email || null,
-      full_name: full_name || null,
-      role: role || "user",
-      is_active: is_active ? 1 : 0,
-      updated_at: new Date().toISOString(),
-    };
-
-    await dbHandler.saveData();
+    // Update user in SQLite
+    const result = dbHandler.db
+      .prepare(
+        `
+      UPDATE tb_users 
+      SET username = ?, email = ?, full_name = ?, role = ?, is_active = ?, updated_at = ?
+      WHERE id = ?
+    `
+      )
+      .run(
+        username,
+        email || null,
+        full_name || null,
+        role || "user",
+        is_active ? 1 : 0,
+        new Date().toISOString(),
+        parseInt(id)
+      );
 
     res.json({
       success: true,
@@ -2160,11 +2458,15 @@ app.put("/api/users/:id/password", async (req, res) => {
     await dbHandler.connect();
 
     // Find user by ID
-    const userIndex = dbHandler.data.tb_users.findIndex(
-      (user) => user.id === parseInt(id)
-    );
+    const user = dbHandler.db
+      .prepare(
+        `
+      SELECT * FROM tb_users WHERE id = ?
+    `
+      )
+      .get(parseInt(id));
 
-    if (userIndex === -1) {
+    if (!user) {
       return res.status(404).json({ error: "User not found" });
     }
 
@@ -2172,14 +2474,16 @@ app.put("/api/users/:id/password", async (req, res) => {
     const bcrypt = await import("bcrypt");
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // Update password
-    dbHandler.data.tb_users[userIndex] = {
-      ...dbHandler.data.tb_users[userIndex],
-      password: hashedPassword,
-      updated_at: new Date().toISOString(),
-    };
-
-    await dbHandler.saveData();
+    // Update password in SQLite
+    const result = dbHandler.db
+      .prepare(
+        `
+      UPDATE tb_users 
+      SET password = ?, updated_at = ?
+      WHERE id = ?
+    `
+      )
+      .run(hashedPassword, new Date().toISOString(), parseInt(id));
 
     res.json({
       success: true,
@@ -2200,24 +2504,31 @@ app.delete("/api/users/:id", async (req, res) => {
     await dbHandler.connect();
 
     // Find user by ID
-    const userIndex = dbHandler.data.tb_users.findIndex(
-      (user) => user.id === parseInt(id)
-    );
+    const user = dbHandler.db
+      .prepare(
+        `
+      SELECT * FROM tb_users WHERE id = ?
+    `
+      )
+      .get(parseInt(id));
 
-    if (userIndex === -1) {
+    if (!user) {
       return res.status(404).json({ error: "User not found" });
     }
-
-    const user = dbHandler.data.tb_users[userIndex];
 
     // Prevent deleting admin user
     if (user.username === "admin") {
       return res.status(400).json({ error: "Cannot delete admin user" });
     }
 
-    // Remove user from array
-    dbHandler.data.tb_users.splice(userIndex, 1);
-    await dbHandler.saveData();
+    // Delete user from SQLite
+    const result = dbHandler.db
+      .prepare(
+        `
+      DELETE FROM tb_users WHERE id = ?
+    `
+      )
+      .run(parseInt(id));
 
     res.json({
       success: true,
@@ -2244,7 +2555,13 @@ app.post("/api/auth/login", async (req, res) => {
     await dbHandler.connect();
 
     // Find user by username
-    const user = dbHandler.data.tb_users.find((u) => u.username === username);
+    const user = dbHandler.db
+      .prepare(
+        `
+      SELECT * FROM tb_users WHERE username = ?
+    `
+      )
+      .get(username);
 
     if (!user) {
       return res.status(401).json({ error: "Invalid credentials" });
@@ -2262,17 +2579,14 @@ app.post("/api/auth/login", async (req, res) => {
       return res.status(401).json({ error: "Invalid credentials" });
     }
 
-    // Update last login
-    const userIndex = dbHandler.data.tb_users.findIndex(
-      (u) => u.id === user.id
-    );
-    if (userIndex !== -1) {
-      dbHandler.data.tb_users[userIndex] = {
-        ...dbHandler.data.tb_users[userIndex],
-        last_login: new Date().toISOString(),
-      };
-      await dbHandler.saveData();
-    }
+    // Update last login in SQLite
+    dbHandler.db
+      .prepare(
+        `
+      UPDATE tb_users SET last_login = ? WHERE id = ?
+    `
+      )
+      .run(new Date().toISOString(), user.id);
 
     // Set session cookie
     res.cookie("authToken", "wa-gateway-auth-2024", {
@@ -2323,7 +2637,13 @@ app.get("/api/auth/me", async (req, res) => {
     await dbHandler.connect();
 
     // Find user by username
-    const user = dbHandler.data.tb_users.find((u) => u.username === username);
+    const user = dbHandler.db
+      .prepare(
+        `
+      SELECT * FROM tb_users WHERE username = ?
+    `
+      )
+      .get(username);
 
     if (!user) {
       return res.status(401).json({ error: "User not found" });
@@ -2369,7 +2689,13 @@ app.post("/login", async (req, res) => {
     await dbHandler.connect();
 
     // Find user by username
-    const user = dbHandler.data.tb_users.find((u) => u.username === username);
+    const user = dbHandler.db
+      .prepare(
+        `
+      SELECT * FROM tb_users WHERE username = ?
+    `
+      )
+      .get(username);
 
     if (!user) {
       return res.render("login", { error: "Invalid credentials" });
@@ -2387,17 +2713,14 @@ app.post("/login", async (req, res) => {
       return res.render("login", { error: "Invalid credentials" });
     }
 
-    // Update last login
-    const userIndex = dbHandler.data.tb_users.findIndex(
-      (u) => u.id === user.id
-    );
-    if (userIndex !== -1) {
-      dbHandler.data.tb_users[userIndex] = {
-        ...dbHandler.data.tb_users[userIndex],
-        last_login: new Date().toISOString(),
-      };
-      await dbHandler.saveData();
-    }
+    // Update last login in SQLite
+    dbHandler.db
+      .prepare(
+        `
+      UPDATE tb_users SET last_login = ? WHERE id = ?
+    `
+      )
+      .run(new Date().toISOString(), user.id);
 
     // Set session cookie
     res.cookie("authToken", "wa-gateway-auth-2024", {
@@ -2434,18 +2757,20 @@ app.get("/api/menus", async (req, res) => {
     const connected = await dbHandler.connect();
 
     if (!connected) {
-      return res.status(500).json({ error: "JSON database connection failed" });
+      return res
+        .status(500)
+        .json({ error: "SQLite database connection failed" });
     }
 
-    // Get menus from JSON database
-    const menus = dbHandler.data.tb_menu
-      .map((menu) => ({
-        id: menu.id,
-        name: menu.name,
-        remark: menu.remark,
-        time_stamp: menu.time_stamp,
-      }))
-      .sort((a, b) => a.id - b.id);
+    // Get menus from SQLite database
+    const menus = dbHandler.db
+      .prepare(
+        `
+      SELECT * FROM tb_menu 
+      ORDER BY id
+    `
+      )
+      .all();
 
     res.json(menus);
   } catch (error) {
@@ -2466,23 +2791,19 @@ app.post("/api/menus", async (req, res) => {
     const dbHandler = new SQLiteDatabaseHandler();
     await dbHandler.connect();
 
-    // Generate new ID
-    const newId = Math.max(...dbHandler.data.tb_menu.map((m) => m.id), 0) + 1;
-
-    // Create new menu
-    const newMenu = {
-      id: newId,
-      name,
-      remark,
-      time_stamp: new Date().toISOString(),
-    };
-
-    dbHandler.data.tb_menu.push(newMenu);
-    await dbHandler.saveData();
+    // Create new menu in SQLite
+    const result = dbHandler.db
+      .prepare(
+        `
+      INSERT INTO tb_menu (name, remark, time_stamp) 
+      VALUES (?, ?, ?)
+    `
+      )
+      .run(name, remark, new Date().toISOString());
 
     res.json({
       success: true,
-      id: newId,
+      id: result.lastInsertRowid,
       message: "Menu created successfully",
     });
   } catch (error) {
@@ -2504,23 +2825,20 @@ app.put("/api/menus/:id", async (req, res) => {
     const dbHandler = new SQLiteDatabaseHandler();
     await dbHandler.connect();
 
-    // Find menu by ID
-    const menuIndex = dbHandler.data.tb_menu.findIndex(
-      (m) => m.id === parseInt(id)
-    );
+    // Update menu in SQLite
+    const result = dbHandler.db
+      .prepare(
+        `
+      UPDATE tb_menu 
+      SET name = ?, remark = ?, time_stamp = ? 
+      WHERE id = ?
+    `
+      )
+      .run(name, remark, new Date().toISOString(), parseInt(id));
 
-    if (menuIndex === -1) {
+    if (result.changes === 0) {
       return res.status(404).json({ error: "Menu not found" });
     }
-
-    // Update menu
-    dbHandler.data.tb_menu[menuIndex] = {
-      ...dbHandler.data.tb_menu[menuIndex],
-      name,
-      remark,
-    };
-
-    await dbHandler.saveData();
 
     res.json({
       success: true,
@@ -2541,28 +2859,32 @@ app.delete("/api/menus/:id", async (req, res) => {
     await dbHandler.connect();
 
     // Check if menu is being used by bot menus
-    const botMenusCount = dbHandler.data.tb_botmenu.filter(
-      (bm) => bm.menu_id === parseInt(id)
-    ).length;
+    const botMenusCount = dbHandler.db
+      .prepare(
+        `
+      SELECT COUNT(*) as count FROM tb_botmenu WHERE menu_id = ?
+    `
+      )
+      .get(parseInt(id));
 
-    if (botMenusCount > 0) {
+    if (botMenusCount.count > 0) {
       return res.status(400).json({
         error: "Cannot delete menu. It is being used by bot menus.",
       });
     }
 
-    // Find menu by ID
-    const menuIndex = dbHandler.data.tb_menu.findIndex(
-      (m) => m.id === parseInt(id)
-    );
+    // Delete menu from SQLite
+    const result = dbHandler.db
+      .prepare(
+        `
+      DELETE FROM tb_menu WHERE id = ?
+    `
+      )
+      .run(parseInt(id));
 
-    if (menuIndex === -1) {
+    if (result.changes === 0) {
       return res.status(404).json({ error: "Menu not found" });
     }
-
-    // Remove menu from array
-    dbHandler.data.tb_menu.splice(menuIndex, 1);
-    await dbHandler.saveData();
 
     res.json({
       success: true,
@@ -2581,25 +2903,20 @@ app.get("/api/botmenus", async (req, res) => {
     const connected = await dbHandler.connect();
 
     if (!connected) {
-      return res.status(500).json({ error: "JSON database connection failed" });
+      return res
+        .status(500)
+        .json({ error: "SQLite database connection failed" });
     }
 
-    // Get botmenus from JSON database
-    const botmenus = dbHandler.data.tb_botmenu
-      .map((botmenu) => ({
-        id: botmenu.id,
-        menu_id: botmenu.menu_id,
-        parent_id: botmenu.parent_id,
-        keyword: botmenu.keyword,
-        description: botmenu.description,
-        url: botmenu.url,
-      }))
-      .sort((a, b) => {
-        if (a.menu_id !== b.menu_id) return a.menu_id - b.menu_id;
-        if (a.parent_id !== b.parent_id)
-          return (a.parent_id || 0) - (b.parent_id || 0);
-        return a.keyword.localeCompare(b.keyword);
-      });
+    // Get botmenus from SQLite database
+    const botmenus = dbHandler.db
+      .prepare(
+        `
+      SELECT * FROM tb_botmenu 
+      ORDER BY menu_id, parent_id, keyword
+    `
+      )
+      .all();
 
     res.json(botmenus);
   } catch (error) {
@@ -2623,56 +2940,67 @@ app.post("/api/botmenus", async (req, res) => {
     await dbHandler.connect();
 
     // Check if menu_id exists
-    const menuExists = dbHandler.data.tb_menu.some(
-      (m) => m.id === parseInt(menu_id)
-    );
+    const menuExists = dbHandler.db
+      .prepare(
+        `
+      SELECT COUNT(*) as count FROM tb_menu WHERE id = ?
+    `
+      )
+      .get(parseInt(menu_id));
 
-    if (!menuExists) {
+    if (menuExists.count === 0) {
       return res.status(400).json({ error: "Menu ID does not exist" });
     }
 
     // Check if parent_id exists (if provided)
     if (parent_id) {
-      const parentExists = dbHandler.data.tb_botmenu.some(
-        (bm) => bm.id === parseInt(parent_id)
-      );
+      const parentExists = dbHandler.db
+        .prepare(
+          `
+        SELECT COUNT(*) as count FROM tb_botmenu WHERE id = ?
+      `
+        )
+        .get(parseInt(parent_id));
 
-      if (!parentExists) {
+      if (parentExists.count === 0) {
         return res.status(400).json({ error: "Parent ID does not exist" });
       }
     }
 
     // Check if keyword already exists for the same menu_id
-    const keywordExists = dbHandler.data.tb_botmenu.some(
-      (bm) => bm.keyword === keyword && bm.menu_id === parseInt(menu_id)
-    );
+    const keywordExists = dbHandler.db
+      .prepare(
+        `
+      SELECT COUNT(*) as count FROM tb_botmenu WHERE keyword = ? AND menu_id = ?
+    `
+      )
+      .get(keyword, parseInt(menu_id));
 
-    if (keywordExists) {
+    if (keywordExists.count > 0) {
       return res
         .status(400)
         .json({ error: "Keyword already exists for this menu" });
     }
 
-    // Generate new ID
-    const newId =
-      Math.max(...dbHandler.data.tb_botmenu.map((bm) => bm.id), 0) + 1;
-
-    // Create new botmenu
-    const newBotmenu = {
-      id: newId,
-      menu_id: parseInt(menu_id),
-      parent_id: parent_id ? parseInt(parent_id) : null,
-      keyword,
-      description,
-      url: url || null,
-    };
-
-    dbHandler.data.tb_botmenu.push(newBotmenu);
-    await dbHandler.saveData();
+    // Create new botmenu in SQLite
+    const result = dbHandler.db
+      .prepare(
+        `
+      INSERT INTO tb_botmenu (menu_id, parent_id, keyword, description, url) 
+      VALUES (?, ?, ?, ?, ?)
+    `
+      )
+      .run(
+        parseInt(menu_id),
+        parent_id ? parseInt(parent_id) : null,
+        keyword,
+        description,
+        url || null
+      );
 
     res.json({
       success: true,
-      id: newId,
+      id: result.lastInsertRowid,
       message: "Bot menu created successfully",
     });
   } catch (error) {
@@ -2697,59 +3025,70 @@ app.put("/api/botmenus/:id", async (req, res) => {
     await dbHandler.connect();
 
     // Check if menu_id exists
-    const menuExists = dbHandler.data.tb_menu.some(
-      (m) => m.id === parseInt(menu_id)
-    );
+    const menuExists = dbHandler.db
+      .prepare(
+        `
+      SELECT COUNT(*) as count FROM tb_menu WHERE id = ?
+    `
+      )
+      .get(parseInt(menu_id));
 
-    if (!menuExists) {
+    if (menuExists.count === 0) {
       return res.status(400).json({ error: "Menu ID does not exist" });
     }
 
     // Check if parent_id exists (if provided)
     if (parent_id) {
-      const parentExists = dbHandler.data.tb_botmenu.some(
-        (bm) => bm.id === parseInt(parent_id) && bm.id !== parseInt(id)
-      );
+      const parentExists = dbHandler.db
+        .prepare(
+          `
+        SELECT COUNT(*) as count FROM tb_botmenu WHERE id = ? AND id != ?
+      `
+        )
+        .get(parseInt(parent_id), parseInt(id));
 
-      if (!parentExists) {
+      if (parentExists.count === 0) {
         return res.status(400).json({ error: "Parent ID does not exist" });
       }
     }
 
     // Check if keyword already exists for the same menu_id (excluding current botmenu)
-    const keywordExists = dbHandler.data.tb_botmenu.some(
-      (bm) =>
-        bm.keyword === keyword &&
-        bm.menu_id === parseInt(menu_id) &&
-        bm.id !== parseInt(id)
-    );
+    const keywordExists = dbHandler.db
+      .prepare(
+        `
+      SELECT COUNT(*) as count FROM tb_botmenu 
+      WHERE keyword = ? AND menu_id = ? AND id != ?
+    `
+      )
+      .get(keyword, parseInt(menu_id), parseInt(id));
 
-    if (keywordExists) {
+    if (keywordExists.count > 0) {
       return res
         .status(400)
         .json({ error: "Keyword already exists for this menu" });
     }
 
-    // Find botmenu by ID
-    const botmenuIndex = dbHandler.data.tb_botmenu.findIndex(
-      (bm) => bm.id === parseInt(id)
-    );
+    // Update botmenu in SQLite
+    const result = dbHandler.db
+      .prepare(
+        `
+      UPDATE tb_botmenu 
+      SET menu_id = ?, parent_id = ?, keyword = ?, description = ?, url = ?
+      WHERE id = ?
+    `
+      )
+      .run(
+        parseInt(menu_id),
+        parent_id ? parseInt(parent_id) : null,
+        keyword,
+        description,
+        url || null,
+        parseInt(id)
+      );
 
-    if (botmenuIndex === -1) {
+    if (result.changes === 0) {
       return res.status(404).json({ error: "Bot menu not found" });
     }
-
-    // Update botmenu
-    dbHandler.data.tb_botmenu[botmenuIndex] = {
-      ...dbHandler.data.tb_botmenu[botmenuIndex],
-      menu_id: parseInt(menu_id),
-      parent_id: parent_id ? parseInt(parent_id) : null,
-      keyword,
-      description,
-      url: url || null,
-    };
-
-    await dbHandler.saveData();
 
     res.json({
       success: true,
@@ -2770,28 +3109,32 @@ app.delete("/api/botmenus/:id", async (req, res) => {
     await dbHandler.connect();
 
     // Check if this bot menu has children
-    const childrenCount = dbHandler.data.tb_botmenu.filter(
-      (bm) => bm.parent_id === parseInt(id)
-    ).length;
+    const childrenCount = dbHandler.db
+      .prepare(
+        `
+      SELECT COUNT(*) as count FROM tb_botmenu WHERE parent_id = ?
+    `
+      )
+      .get(parseInt(id));
 
-    if (childrenCount > 0) {
+    if (childrenCount.count > 0) {
       return res.status(400).json({
         error: "Cannot delete bot menu. It has child menus.",
       });
     }
 
-    // Find botmenu by ID
-    const botmenuIndex = dbHandler.data.tb_botmenu.findIndex(
-      (bm) => bm.id === parseInt(id)
-    );
+    // Delete botmenu from SQLite
+    const result = dbHandler.db
+      .prepare(
+        `
+      DELETE FROM tb_botmenu WHERE id = ?
+    `
+      )
+      .run(parseInt(id));
 
-    if (botmenuIndex === -1) {
+    if (result.changes === 0) {
       return res.status(404).json({ error: "Bot menu not found" });
     }
-
-    // Remove botmenu from array
-    dbHandler.data.tb_botmenu.splice(botmenuIndex, 1);
-    await dbHandler.saveData();
 
     res.json({
       success: true,
@@ -2876,7 +3219,11 @@ try {
         res.json(result);
       } catch (e) {
         console.error(`🤖 JSON parse error:`, e.message);
-        res.json({ success: false, message: "Invalid JSON response", output });
+        res.json({
+          success: false,
+          message: "Invalid JSON response",
+          output,
+        });
       }
     } else {
       console.error(`🤖 PHP execution failed with code: ${code}`);
