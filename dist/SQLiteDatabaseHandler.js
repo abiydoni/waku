@@ -83,6 +83,43 @@ class SQLiteDatabaseHandler {
         )
       `);
 
+      // Create tb_sessions table
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS tb_sessions (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          session_id TEXT UNIQUE NOT NULL,
+          session_name TEXT,
+          status TEXT DEFAULT 'disconnected',
+          phone_number TEXT,
+          qr_code TEXT,
+          last_activity DATETIME DEFAULT CURRENT_TIMESTAMP,
+          current_menu_id INTEGER,
+          user_context TEXT,
+          bot_enabled BOOLEAN DEFAULT 1,
+          auto_reply_enabled BOOLEAN DEFAULT 1,
+          group_reply_enabled BOOLEAN DEFAULT 0,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY (current_menu_id) REFERENCES tb_menu (id)
+        )
+      `);
+
+      // Create tb_bot_settings table
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS tb_bot_settings (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          session_id TEXT NOT NULL,
+          setting_key TEXT NOT NULL,
+          setting_value TEXT,
+          setting_type TEXT DEFAULT 'string',
+          description TEXT,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY (session_id) REFERENCES tb_sessions (session_id),
+          UNIQUE(session_id, setting_key)
+        )
+      `);
+
       // Check if data already exists
       const menuCount = this.db
         .prepare("SELECT COUNT(*) as count FROM tb_menu")
@@ -93,9 +130,15 @@ class SQLiteDatabaseHandler {
       const userCount = this.db
         .prepare("SELECT COUNT(*) as count FROM tb_users")
         .get();
+      const sessionCount = this.db
+        .prepare("SELECT COUNT(*) as count FROM tb_sessions")
+        .get();
+      const settingsCount = this.db
+        .prepare("SELECT COUNT(*) as count FROM tb_bot_settings")
+        .get();
 
       console.log(
-        `📊 Current data: ${menuCount.count} menus, ${botMenuCount.count} bot menus, ${userCount.count} users`
+        `📊 Current data: ${menuCount.count} menus, ${botMenuCount.count} bot menus, ${userCount.count} users, ${sessionCount.count} sessions, ${settingsCount.count} settings`
       );
 
       // Insert sample data if tables are empty
@@ -321,6 +364,41 @@ class SQLiteDatabaseHandler {
     }
   }
 
+  // Method untuk mendapatkan semua menu dari tb_menu
+  async getAllMenus() {
+    try {
+      console.log("📋 Getting all menus from tb_menu...");
+
+      // Direct query without ensureConnection
+      if (!this.db) {
+        console.log("📋 Database not initialized, connecting...");
+        await this.connect();
+      }
+
+      const menus = this.db
+        .prepare(
+          `
+        SELECT * FROM tb_menu 
+        ORDER BY id
+      `
+        )
+        .all();
+
+      console.log("📋 All menus:", menus);
+
+      // Pastikan mengembalikan array
+      if (!Array.isArray(menus)) {
+        console.error("❌ getAllMenus did not return an array:", typeof menus);
+        return [];
+      }
+
+      return menus;
+    } catch (error) {
+      console.error("❌ Error getting all menus:", error.message);
+      return [];
+    }
+  }
+
   // Method untuk mendapatkan sub menu berdasarkan parent_id
   async getSubMenus(parentId) {
     try {
@@ -388,7 +466,8 @@ class SQLiteDatabaseHandler {
 
       const response = await axios.get(url, {
         headers: {
-          "User-Agent": "WhatsApp Bot",
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
           Accept: "application/json, text/plain, */*",
         },
         timeout: 10000, // 10 seconds timeout
@@ -408,6 +487,11 @@ class SQLiteDatabaseHandler {
   // Method untuk memformat response dari API
   formatApiResponse(data) {
     try {
+      // Jika data sudah berupa string yang sudah diformat, langsung return
+      if (typeof data === "string") {
+        return data;
+      }
+
       // Data sudah berupa object dari axios
       if (Array.isArray(data)) {
         // Jika array, format sebagai list
@@ -491,8 +575,177 @@ class SQLiteDatabaseHandler {
     return response;
   }
 
+  // Method untuk memproses pesan berdasarkan current_menu_id
+  async processMessageByCurrentMenu(message, sessionId) {
+    try {
+      await this.ensureConnection();
+
+      console.log(
+        `🔍 Processing message: "${message}" for session: ${sessionId}`
+      );
+
+      // Dapatkan current_menu_id dari session
+      const session = this.getSession(sessionId);
+      if (!session) {
+        console.log(`❌ Session ${sessionId} not found`);
+        return "❌ Session tidak ditemukan.";
+      }
+
+      const currentMenuId = session.current_menu_id;
+      console.log(`📋 Session current_menu_id: ${currentMenuId}`);
+
+      // Jika pesan adalah "menu", tampilkan menu utama
+      const lowerMessage = message.toLowerCase().trim();
+      if (lowerMessage === "menu") {
+        console.log("📋 User requested main menu");
+        return await this.getMainMenuResponse();
+      }
+
+      if (!currentMenuId) {
+        // Jika tidak ada current_menu_id, proses sebagai menu utama
+        console.log("📋 No current_menu_id, showing main menu");
+        return await this.getMainMenuResponse();
+      }
+
+      // Cari menu berdasarkan current_menu_id (tb_menu.id)
+      const menu = await this.findMenuByMenuId(currentMenuId);
+      if (!menu) {
+        console.log(`❌ Menu with menu_id ${currentMenuId} not found`);
+        return "❌ Menu tidak ditemukan.";
+      }
+
+      console.log(
+        `📋 Found menu: ${menu.description} (ID: ${menu.id}, Menu ID: ${menu.menu_id})`
+      );
+
+      // Jika pesan adalah keyword menu saat ini, proses langsung
+      if (lowerMessage === menu.keyword) {
+        console.log(`📋 Processing menu action for: ${menu.description}`);
+        return await this.processMenuAction(menu);
+      }
+
+      // Jika pesan adalah angka atau keyword lain, cari di sub-menu atau menu lain
+      const foundMenu = await this.findMenuByKeyword(lowerMessage);
+      if (foundMenu) {
+        console.log(`📋 Found menu by keyword: ${foundMenu.description}`);
+        // Update current_menu_id jika menu ditemukan (gunakan menu_id dari tb_botmenu)
+        await this.updateCurrentMenu(sessionId, foundMenu.menu_id);
+        return await this.processMenuAction(foundMenu);
+      }
+
+      // Jika tidak ditemukan, cek apakah ada sub-menu
+      const subMenus = await this.getSubMenus(menu.id);
+      if (subMenus.length > 0) {
+        console.log(`📋 Showing sub-menus for: ${menu.description}`);
+        // Tampilkan sub-menu yang tersedia
+        let response = `📋 *${menu.description}*\n\n`;
+        subMenus.forEach((subMenu) => {
+          response += `🔹 ${subMenu.keyword}. ${subMenu.description}\n`;
+        });
+        response += "\n🔙 Ketik 'menu' untuk kembali ke menu utama";
+        return response;
+      }
+
+      // Jika tidak ada sub-menu dan pesan tidak dikenali, beri pesan bantuan
+      console.log(`❓ Unknown message: "${message}"`);
+      return `❓ Pesan tidak dikenali. Ketik 'menu' untuk melihat menu utama.`;
+    } catch (error) {
+      console.error("Error processing message by current menu:", error.message);
+      return this.getErrorMessage(error);
+    }
+  }
+
+  // Method untuk mencari menu berdasarkan menu_id (tb_menu.id)
+  async findMenuByMenuId(menuId) {
+    try {
+      await this.ensureConnection();
+
+      // Cari menu utama berdasarkan menu_id
+      return this.db
+        .prepare(
+          `
+        SELECT * FROM tb_botmenu 
+        WHERE menu_id = ? AND parent_id IS NULL
+        ORDER BY keyword
+        LIMIT 1
+      `
+        )
+        .get(menuId);
+    } catch (error) {
+      console.error("Error finding menu by menu_id:", error.message);
+      return null;
+    }
+  }
+
+  // Method untuk mencari menu berdasarkan ID
+  async findMenuById(menuId) {
+    try {
+      await this.ensureConnection();
+
+      return this.db
+        .prepare(
+          `
+        SELECT * FROM tb_botmenu 
+        WHERE id = ?
+      `
+        )
+        .get(menuId);
+    } catch (error) {
+      console.error("Error finding menu by ID:", error.message);
+      return null;
+    }
+  }
+
+  // Method untuk memproses aksi menu
+  async processMenuAction(menu) {
+    try {
+      console.log(`🎯 Processing menu action: ${menu.description}`);
+
+      if (menu.url && menu.url !== "Masih dalam pengembangan") {
+        // Jika ada URL, cari sub menu terlebih dahulu
+        const subMenus = await this.getSubMenus(menu.id);
+        if (subMenus.length > 0) {
+          let response = `📋 *${menu.description}*\n\n`;
+          subMenus.forEach((subMenu) => {
+            response += `🔹 ${subMenu.keyword}. ${subMenu.description}\n`;
+          });
+          response += "\n🔙 Ketik 'menu' untuk kembali ke menu utama";
+          return response;
+        } else {
+          // Jika ada URL tapi tidak ada sub menu, ambil data dari URL
+          try {
+            const data = await this.fetchDataFromUrl(menu.url);
+            return `📋 *${menu.description}*\n\n${data}\n\n🔙 Ketik 'menu' untuk kembali ke menu utama`;
+          } catch (error) {
+            console.error(
+              `Error fetching data from ${menu.url}:`,
+              error.message
+            );
+            return `📋 *${menu.description}*\n\n⚠️ Gagal mengambil data dari server.\n\n🔙 Ketik 'menu' untuk kembali ke menu utama`;
+          }
+        }
+      } else {
+        // Jika tidak ada URL, cari sub menu
+        const subMenus = await this.getSubMenus(menu.id);
+        if (subMenus.length > 0) {
+          let response = `📋 *${menu.description}*\n\n`;
+          subMenus.forEach((subMenu) => {
+            response += `🔹 ${subMenu.keyword}. ${subMenu.description}\n`;
+          });
+          response += "\n🔙 Ketik 'menu' untuk kembali ke menu utama";
+          return response;
+        } else {
+          return `📋 *${menu.description}*\n\n⚠️ Fitur ini masih dalam pengembangan.\n\n🔙 Ketik 'menu' untuk kembali ke menu utama`;
+        }
+      }
+    } catch (error) {
+      console.error("Error processing menu action:", error.message);
+      return this.getErrorMessage(error);
+    }
+  }
+
   // Method untuk memproses pesan
-  async processMessage(message) {
+  async processMessage(message, sessionId = null) {
     try {
       await this.ensureConnection();
 
@@ -501,6 +754,11 @@ class SQLiteDatabaseHandler {
       // Cari menu berdasarkan keyword
       const menu = await this.findMenuByKeyword(lowerMessage);
       if (menu) {
+        // Simpan current menu ke database jika sessionId tersedia
+        if (sessionId) {
+          await this.updateCurrentMenu(sessionId, menu.id);
+        }
+
         if (menu.url && menu.url !== "Masih dalam pengembangan") {
           // Jika ada URL, cari sub menu
           const subMenus = await this.getSubMenus(menu.id);
@@ -546,8 +804,23 @@ class SQLiteDatabaseHandler {
         return await this.formatSearchResults(searchResults);
       }
 
-      // Default response
-      return "❌ Menu tidak ditemukan.\n\n🔙 Ketik 'menu' untuk melihat daftar menu yang tersedia.";
+      // Jika pesan adalah "menu", tampilkan menu utama
+      if (lowerMessage === "menu") {
+        return await this.getMainMenuResponse();
+      }
+
+      // Untuk pesan non-menu, beri respons yang lebih natural
+      const responses = [
+        "Halo! Ada yang bisa saya bantu?",
+        "Terima kasih atas pesannya! Ada yang bisa saya bantu?",
+        "Hai! Bagaimana kabar Anda hari ini?",
+        "Halo! Apakah ada yang ingin Anda tanyakan?",
+        "Hai! Ada yang bisa saya bantu untuk Anda?",
+      ];
+
+      const randomResponse =
+        responses[Math.floor(Math.random() * responses.length)];
+      return `${randomResponse}\n\n🔙 Ketik 'menu' untuk melihat daftar menu yang tersedia.`;
     } catch (error) {
       console.error("Error processing message:", error.message);
       return this.getErrorMessage(error);
@@ -556,7 +829,8 @@ class SQLiteDatabaseHandler {
 
   // Method untuk memastikan koneksi database
   async ensureConnection() {
-    if (!this.isConnected) {
+    if (!this.isConnected || !this.db) {
+      console.log("🔄 Reconnecting to database...");
       await this.connect();
     }
   }
@@ -568,6 +842,289 @@ class SQLiteDatabaseHandler {
       "Silakan coba lagi atau hubungi administrator.\n\n" +
       "🔙 Ketik 'menu' untuk kembali ke menu utama"
     );
+  }
+
+  // ===== SESSION MANAGEMENT METHODS =====
+
+  // Method untuk menyimpan/update session
+  async saveSession(sessionData) {
+    try {
+      const {
+        session_id,
+        session_name,
+        status = "disconnected",
+        phone_number,
+        qr_code,
+        current_menu_id = 0,
+        user_context,
+        bot_enabled = 1,
+        auto_reply_enabled = 1,
+        group_reply_enabled = 0,
+      } = sessionData;
+
+      const stmt = this.db.prepare(`
+        INSERT OR REPLACE INTO tb_sessions (
+          session_id, session_name, status, phone_number, qr_code,
+          current_menu_id, user_context, bot_enabled, auto_reply_enabled,
+          group_reply_enabled, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      `);
+
+      stmt.run(
+        session_id,
+        session_name,
+        status,
+        phone_number,
+        qr_code,
+        current_menu_id,
+        user_context,
+        bot_enabled,
+        auto_reply_enabled,
+        group_reply_enabled
+      );
+
+      console.log(`✅ Session saved: ${session_id}`);
+      return true;
+    } catch (error) {
+      console.error("Error saving session:", error.message);
+      return false;
+    }
+  }
+
+  // Method untuk mendapatkan session
+  getSession(sessionId) {
+    try {
+      // Direct query without ensureConnection
+      if (!this.db) {
+        console.log("📋 Database not initialized for getSession");
+        return null;
+      }
+
+      const stmt = this.db.prepare(
+        "SELECT * FROM tb_sessions WHERE session_id = ?"
+      );
+      const session = stmt.get(sessionId);
+      console.log(`📋 Getting session ${sessionId}:`, session);
+
+      // If session not found, create it
+      if (!session) {
+        console.log(
+          `📋 Session ${sessionId} not found, creating default session...`
+        );
+        this.createDefaultSession(sessionId);
+        return this.getSession(sessionId); // Recursive call to get the newly created session
+      }
+
+      // If session exists but current_menu_id is null, set default menu
+      if (session && session.current_menu_id === null) {
+        console.log(
+          `📋 Session ${sessionId} has null current_menu_id, setting default...`
+        );
+        try {
+          const firstMenu = this.db
+            .prepare("SELECT id FROM tb_menu ORDER BY id LIMIT 1")
+            .get();
+          if (firstMenu) {
+            const updateStmt = this.db.prepare(
+              "UPDATE tb_sessions SET current_menu_id = ? WHERE session_id = ?"
+            );
+            updateStmt.run(firstMenu.id, sessionId);
+            session.current_menu_id = firstMenu.id;
+            console.log(
+              `📋 Updated session ${sessionId} current_menu_id to: ${firstMenu.id}`
+            );
+          }
+        } catch (error) {
+          console.log("📋 No menus found to set as default");
+        }
+      }
+
+      return session;
+    } catch (error) {
+      console.error("Error getting session:", error.message);
+      return null;
+    }
+  }
+
+  // Method untuk membuat session default
+  createDefaultSession(sessionId) {
+    try {
+      // Get first menu as default
+      let defaultMenuId = null;
+      try {
+        const firstMenu = this.db
+          .prepare("SELECT id FROM tb_menu ORDER BY id LIMIT 1")
+          .get();
+        if (firstMenu) {
+          defaultMenuId = firstMenu.id;
+          console.log(`📋 Using first menu as default: ${defaultMenuId}`);
+        }
+      } catch (error) {
+        console.log("📋 No menus found, using null as default");
+      }
+
+      const sessionData = {
+        session_id: sessionId,
+        session_name: `Session ${sessionId}`,
+        status: "disconnected",
+        phone_number: null,
+        qr_code: null,
+        current_menu_id: defaultMenuId,
+        user_context: null,
+        bot_enabled: 1,
+        auto_reply_enabled: 1,
+        group_reply_enabled: 0,
+      };
+
+      const stmt = this.db.prepare(`
+        INSERT OR REPLACE INTO tb_sessions (
+          session_id, session_name, status, phone_number, qr_code,
+          current_menu_id, user_context, bot_enabled, auto_reply_enabled,
+          group_reply_enabled, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      `);
+
+      stmt.run(
+        sessionData.session_id,
+        sessionData.session_name,
+        sessionData.status,
+        sessionData.phone_number,
+        sessionData.qr_code,
+        sessionData.current_menu_id,
+        sessionData.user_context,
+        sessionData.bot_enabled,
+        sessionData.auto_reply_enabled,
+        sessionData.group_reply_enabled
+      );
+
+      console.log(`✅ Default session created: ${sessionId}`);
+      return true;
+    } catch (error) {
+      console.error("Error creating default session:", error.message);
+      return false;
+    }
+  }
+
+  // Method untuk mendapatkan semua sessions
+  getAllSessions() {
+    try {
+      const stmt = this.db.prepare(
+        "SELECT * FROM tb_sessions ORDER BY updated_at DESC"
+      );
+      return stmt.all();
+    } catch (error) {
+      console.error("Error getting all sessions:", error.message);
+      return [];
+    }
+  }
+
+  // Method untuk update status session
+  updateSessionStatus(sessionId, status) {
+    try {
+      const stmt = this.db.prepare(`
+        UPDATE tb_sessions 
+        SET status = ?, last_activity = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP 
+        WHERE session_id = ?
+      `);
+      stmt.run(status, sessionId);
+      console.log(`✅ Session status updated: ${sessionId} -> ${status}`);
+      return true;
+    } catch (error) {
+      console.error("Error updating session status:", error.message);
+      return false;
+    }
+  }
+
+  // Method untuk update current menu
+  updateCurrentMenu(sessionId, menuId) {
+    try {
+      const stmt = this.db.prepare(`
+        UPDATE tb_sessions 
+        SET current_menu_id = ?, updated_at = CURRENT_TIMESTAMP 
+        WHERE session_id = ?
+      `);
+      stmt.run(menuId, sessionId);
+      console.log(`✅ Current menu updated: ${sessionId} -> ${menuId}`);
+      return true;
+    } catch (error) {
+      console.error("Error updating current menu:", error.message);
+      return false;
+    }
+  }
+
+  // ===== BOT SETTINGS METHODS =====
+
+  // Method untuk menyimpan setting
+  async saveSetting(sessionId, key, value, type = "string", description = "") {
+    try {
+      const stmt = this.db.prepare(`
+        INSERT OR REPLACE INTO tb_bot_settings 
+        (session_id, setting_key, setting_value, setting_type, description, updated_at)
+        VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      `);
+      stmt.run(sessionId, key, value, type, description);
+      console.log(`✅ Setting saved: ${sessionId}.${key} = ${value}`);
+      return true;
+    } catch (error) {
+      console.error("Error saving setting:", error.message);
+      return false;
+    }
+  }
+
+  // Method untuk mendapatkan setting
+  getSetting(sessionId, key) {
+    try {
+      const stmt = this.db.prepare(
+        "SELECT * FROM tb_bot_settings WHERE session_id = ? AND setting_key = ?"
+      );
+      return stmt.get(sessionId, key);
+    } catch (error) {
+      console.error("Error getting setting:", error.message);
+      return null;
+    }
+  }
+
+  // Method untuk mendapatkan semua settings session
+  getAllSettings(sessionId) {
+    try {
+      const stmt = this.db.prepare(
+        "SELECT * FROM tb_bot_settings WHERE session_id = ? ORDER BY setting_key"
+      );
+      return stmt.all(sessionId);
+    } catch (error) {
+      console.error("Error getting all settings:", error.message);
+      return [];
+    }
+  }
+
+  // Method untuk menghapus setting
+  deleteSetting(sessionId, key) {
+    try {
+      const stmt = this.db.prepare(
+        "DELETE FROM tb_bot_settings WHERE session_id = ? AND setting_key = ?"
+      );
+      stmt.run(sessionId, key);
+      console.log(`✅ Setting deleted: ${sessionId}.${key}`);
+      return true;
+    } catch (error) {
+      console.error("Error deleting setting:", error.message);
+      return false;
+    }
+  }
+
+  // Method untuk menghapus session
+  deleteSession(sessionId) {
+    try {
+      const stmt = this.db.prepare(
+        "DELETE FROM tb_sessions WHERE session_id = ?"
+      );
+      const result = stmt.run(sessionId);
+      console.log(`✅ Session deleted: ${sessionId} (${result.changes} rows)`);
+      return result.changes > 0;
+    } catch (error) {
+      console.error("Error deleting session:", error.message);
+      return false;
+    }
   }
 
   // Method untuk menutup koneksi database

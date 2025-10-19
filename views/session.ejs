@@ -200,7 +200,7 @@
       }
 
       /* Touch-friendly buttons */
-      @media (hover: none) and (pointer: coarse) {
+      @media (hover: none) && (pointer: coarse) {
         .card-hover:hover {
           transform: none;
         }
@@ -277,8 +277,8 @@
         }
       }
 
-      /* Landscape mobile optimization */
-      @media (max-width: 768px) and (orientation: landscape) {
+      /* L&&scape mobile optimization */
+      @media (max-width: 768px) && (orientation: l&&scape) {
         .container {
           padding: 0.5rem;
         }
@@ -457,6 +457,30 @@
               </button>
             </div>
 
+            <!-- Debug session data -->
+            <script>
+              console.log("📋 Session data in template:", <%= JSON.stringify(session) %>);
+              console.log("📋 Groups data in template:", <%= JSON.stringify(session.groups) %>);
+              console.log("📋 Groups length:", <%= session.groups ? session.groups.length : 0 %>);
+              console.log("📋 Menus data in template:", <%= JSON.stringify(session.menus) %>);
+              console.log("📋 Menus length:", <%= session.menus ? session.menus.length : 0 %>);
+              console.log("📋 Current menu ID in template:", "<%= session.current_menu_id %>");
+              console.log("📋 Current menu ID type:", typeof "<%= session.current_menu_id %>");
+              
+              // Debug dropdown selection
+              console.log("📋 === DROPDOWN SELECTION DEBUG ===");
+              console.log("📋 Current menu ID (raw):", "<%= session.current_menu_id %>");
+              console.log("📋 Current menu ID (parsed):", parseInt("<%= session.current_menu_id %>"));
+              console.log("📋 Current menu ID (type):", typeof parseInt("<%= session.current_menu_id %>"));
+              
+              <% if (session.menus && session.menus.length > 0) { %>
+                <% session.menus.forEach(menu => { %>
+                  console.log("📋 Menu ID:", <%= menu.id %>, "Type:", typeof <%= menu.id %>);
+                  console.log("📋 Comparison:", parseInt("<%= session.current_menu_id %>"), "===", parseInt("<%= menu.id %>"), "=", parseInt("<%= session.current_menu_id %>") === parseInt("<%= menu.id %>"));
+                <% }) %>
+              <% } %>
+            </script>
+
             <% if (session.groups && session.groups.length > 0) { %>
 
             <div class="space-y-1 max-h-64 overflow-y-auto">
@@ -493,6 +517,16 @@
 
             <% } else { %>
 
+            <!-- Debug: Groups empty condition -->
+            <script>
+              console.log("📋 Groups empty condition triggered");
+              console.log("📋 session.groups:", <%= JSON.stringify(session.groups) %>);
+              <% 
+                const hasGroups = session.groups && session.groups.length > 0;
+              %>
+              console.log("📋 session.groups && length > 0:", <%= hasGroups %>);
+            </script>
+
             <div class="text-center py-8">
               <div
                 class="bg-gray-100 rounded-full w-12 h-12 flex items-center justify-center mx-auto mb-3"
@@ -501,11 +535,27 @@
               </div>
 
               <div class="text-gray-600 font-semibold text-sm mb-1">
-                No Groups
+                <% if (session.status === 'connected') { %>
+                  <% if (session.groups && session.groups.length > 0) { %>
+                    No Groups Found
+                  <% } else { %>
+                    No WhatsApp Groups
+                  <% } %>
+                <% } else { %>
+                  Session Not Connected
+                <% } %>
               </div>
 
               <div class="text-gray-500 text-xs">
-                Connect to discover groups
+                <% if (session.status === 'connected') { %>
+                  <% if (session.groups && session.groups.length > 0) { %>
+                    No groups available in this session
+                  <% } else { %>
+                    This WhatsApp account has no groups
+                  <% } %>
+                <% } else { %>
+                  Connect to WhatsApp to see groups
+                <% } %>
               </div>
             </div>
 
@@ -552,8 +602,10 @@
                 <div class="flex items-end">
                   <button
                     type="button"
-                    class="bg-gradient-to-r from-purple-500 to-purple-600 hover:from-purple-600 hover:to-purple-700 text-white px-3 py-2 rounded-lg transition-all duration-300 flex items-center space-x-2 shadow-sm hover:shadow-md text-xs font-medium"
-                    onclick="showGroupSelector()"
+                    class="<%= session.status === 'connected' ? 'bg-gradient-to-r from-purple-500 to-purple-600 hover:from-purple-600 hover:to-purple-700 text-white' : 'bg-gray-400 text-gray-200 cursor-not-allowed' %> px-3 py-2 rounded-lg transition-all duration-300 flex items-center space-x-2 shadow-sm hover:shadow-md text-xs font-medium"
+                    onclick="<%= session.status === 'connected' ? 'showGroupSelector()' : 'showNotConnectedAlert()' %>"
+                    <%= session.status !== 'connected' ? 'disabled' : '' %>
+                    title="<%= session.status === 'connected' ? 'Pilih grup untuk mengirim pesan' : 'Session harus terhubung untuk melihat grup' %>"
                   >
                     <i class="fas fa-list"></i>
 
@@ -605,6 +657,83 @@
         <!-- Middle Column: Bot Settings & Test -->
 
         <div class="space-y-3 lg:space-y-4">
+          <!-- Current Menu Settings -->
+
+          <div
+            class="bg-white rounded-2xl shadow-xl p-4 card-hover border border-gray-100"
+          >
+            <div class="flex items-center space-x-2 mb-4">
+              <div class="p-2 bg-blue-100 rounded-lg">
+                <i class="fas fa-list-alt text-blue-600"></i>
+              </div>
+
+              <div>
+                <h2 class="text-lg font-bold text-gray-800">Current Menu</h2>
+
+                <p class="text-xs text-gray-500">
+                  Set active menu for this session
+                </p>
+              </div>
+            </div>
+
+            <!-- Current Menu Selector -->
+
+            <div class="mb-4">
+              <div
+                class="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg p-3 border border-blue-200"
+              >
+                <label class="block text-sm font-semibold text-gray-700 mb-2">
+                  Select Current Menu
+                </label>
+
+                <select
+                  id="currentMenuSelect"
+                  class="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-300 text-sm"
+                >
+                  <option value="">Select a menu...</option>
+                  <% if (session.menus && session.menus.length > 0) { %>
+                    <% session.menus.forEach(menu => { %>
+                      <% 
+                        const isSelected = session.current_menu_id ? parseInt(session.current_menu_id) === parseInt(menu.id) : false;
+                      %>
+                      <option value="<%= menu.id %>" <%= isSelected ? 'selected' : '' %>>
+                        <%= menu.name %> (ID: <%= menu.id %>)
+                      </option>
+                    <% }) %>
+                  <% } else { %>
+                    <option value="">No menus available</option>
+                  <% } %>
+                </select>
+
+                <div class="mt-2 flex space-x-2">
+                  <button
+                    id="updateCurrentMenuBtn"
+                    onclick="updateCurrentMenu()"
+                    class="flex-1 bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white px-3 py-2 rounded-lg transition-all duration-300 flex items-center justify-center space-x-2 shadow-sm hover:shadow-md text-xs font-medium"
+                  >
+                    <i class="fas fa-save"></i>
+                    <span>Update Menu</span>
+                  </button>
+
+                  <button
+                    onclick="resetCurrentMenu()"
+                    class="bg-gradient-to-r from-gray-400 to-gray-500 hover:from-gray-500 hover:to-gray-600 text-white px-3 py-2 rounded-lg transition-all duration-300 flex items-center space-x-2 shadow-sm hover:shadow-md text-xs font-medium"
+                  >
+                    <i class="fas fa-undo"></i>
+                    <span>Reset</span>
+                  </button>
+                </div>
+
+                <div class="mt-2 text-xs text-gray-600">
+                  <strong>Current Menu ID:</strong>
+                  <span id="currentMenuIdDisplay">
+                    <%= session.current_menu_id || 'None' %>
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <!-- Bot Settings -->
 
           <div
@@ -738,7 +867,7 @@
                       >5</span
                     >
 
-                    <span>Save and test menu bot</span>
+                    <span>Save && test menu bot</span>
                   </div>
                 </div>
               </div>
@@ -1092,40 +1221,52 @@
       }
 
       async function copyToClipboard(t) {
+        console.log("📋 Copy to clipboard called with:", t);
+        console.log("📋 Parameter type:", typeof t);
+
         try {
+          // Validate parameter
+          if (!t || typeof t !== "string") {
+            throw new Error(`Invalid parameter: ${t}`);
+          }
+
           await navigator.clipboard.writeText(t);
+          console.log("📋 Clipboard write successful");
         } catch (err) {
-          const textArea = document.createElement("textarea");
+          console.error(
+            "📋 Clipboard API failed, using fallback:",
+            err.message
+          );
 
-          textArea.value = t;
-
-          document.body.appendChild(textArea);
-
-          textArea.select();
-
-          document.execCommand("copy");
-
-          document.body.removeChild(textArea);
+          try {
+            const textArea = document.createElement("textarea");
+            textArea.value = t;
+            document.body.appendChild(textArea);
+            textArea.select();
+            document.execComm&&("copy");
+            document.body.removeChild(textArea);
+            console.log("📋 Fallback copy successful");
+          } catch (fallbackErr) {
+            console.error("📋 Fallback copy failed:", fallbackErr.message);
+            throw fallbackErr;
+          }
         }
 
         if (window.Swal) {
           Swal.fire({
             toast: true,
-
             position: "top",
-
             timer: 1500,
-
             showConfirmButton: false,
-
             icon: "success",
-
-            title: "Copied to clipboard",
+            title: "Group ID copied to clipboard!",
           });
+        } else {
+          alert("Group ID copied to clipboard!");
         }
       }
 
-      // Send Message Form Handler
+      // Send Message Form H&&ler
 
       document
 
@@ -1221,39 +1362,82 @@
         document.getElementById("sendMessageResult").classList.add("hidden");
       }
 
+      // Show alert when session is not connected
+      function showNotConnectedAlert() {
+        Swal.fire({
+          icon: "warning",
+          title: "Session Tidak Terhubung",
+          text: "Session harus terhubung ke WhatsApp terlebih dahulu untuk melihat daftar grup.",
+          confirmButtonText: "OK"
+        });
+      }
+
       // Group Selector with SweetAlert2
 
       async function showGroupSelector() {
+        console.log("📋 showGroupSelector called");
+
         const sessionId = document.getElementById("sessionIdInput").value;
+        console.log("📋 Session ID:", sessionId);
 
         if (!sessionId) {
+          console.warn("📋 No session ID found");
           Swal.fire({
             icon: "warning",
-
             title: "Pilih Session",
-
             text: "Harap pilih session terlebih dahulu.",
           });
-
           return;
         }
 
         try {
+          console.log("📋 Fetching sessions from /api/getSessions...");
           const res = await fetch("/api/getSessions");
+          console.log("📋 Response status:", res.status);
+          console.log("📋 Response ok:", res.ok);
+
+          if (!res.ok) {
+            throw new Error(`HTTP error! status: ${res.status}`);
+          }
 
           const data = await res.json();
+          console.log("📋 Sessions data received:", data);
+          console.log(
+            "📋 Sessions count:",
+            data.sessions ? data.sessions.length : 0
+          );
+
+          if (!data.sessions || !Array.isArray(data.sessions)) {
+            throw new Error("Invalid sessions data format");
+          }
 
           const session = data.sessions.find((s) => s.id === sessionId);
+          console.log("📋 Found session:", session);
+          console.log(
+            "📋 Session groups:",
+            session ? session.groups : "No session found"
+          );
 
           if (!session || !session.groups || session.groups.length === 0) {
+            console.warn("📋 No groups found for session");
+            
+            let title, text;
+            if (!session) {
+              title = "Session Tidak Ditemukan";
+              text = "Session tidak ditemukan atau tidak valid.";
+            } else if (session.status !== "connected") {
+              title = "Session Tidak Terhubung";
+              text = "Session harus terhubung ke WhatsApp terlebih dahulu untuk melihat daftar grup.";
+            } else {
+              title = "Tidak Ada Grup WhatsApp";
+              text = "Akun WhatsApp ini tidak bergabung dengan grup apapun.";
+            }
+            
             Swal.fire({
               icon: "info",
-
-              title: "Tidak ada grup",
-
-              text: "Tidak ada grup ditemukan untuk session ini atau session belum terhubung.",
+              title: title,
+              text: text,
             });
-
             return;
           }
 
@@ -1289,14 +1473,14 @@
             document.getElementById("toInput").value = selectedGroupJid;
           }
         } catch (err) {
-          console.error("Error fetching sessions for group selector:", err);
+          console.error("❌ Error in showGroupSelector:", err);
+          console.error("❌ Error message:", err.message);
+          console.error("❌ Error stack:", err.stack);
 
           Swal.fire({
             icon: "error",
-
             title: "Gagal memuat grup",
-
-            text: err.message,
+            text: `Error: ${err.message}`,
           });
         }
       }
@@ -1360,7 +1544,7 @@
               showConfirmButton: false,
             });
 
-            // Close modal and reload page immediately
+            // Close modal && reload page immediately
 
             setTimeout(() => {
               closeQRModal();
@@ -1780,7 +1964,7 @@
                 },
               };
 
-              // Update bot type display and feature status
+              // Update bot type display && feature status
               updateBotTypeDisplay(originalSettings.botType);
 
               markAsSaved();
@@ -1848,7 +2032,7 @@
             document.getElementById("errorResponse").value =
               "❌ Menu tidak ditemukan. Ketik 'menu' untuk melihat pilihan yang tersedia.";
 
-            // Update bot type display and feature status
+            // Update bot type display && feature status
             updateBotTypeDisplay("general");
 
             Swal.fire({
@@ -1897,7 +2081,7 @@
                   document.getElementById("errorResponse").value =
                     config.responses.errorResponse;
 
-                  // Update bot type display and feature status
+                  // Update bot type display && feature status
                   updateBotTypeDisplay(selectedBotType);
 
                   Swal.fire({
@@ -1971,7 +2155,7 @@
 
               updateToggleVisual();
 
-              // Update bot type display and feature status
+              // Update bot type display && feature status
 
               updateBotTypeDisplay(settings.botType);
 
@@ -2083,8 +2267,79 @@
       });
 
       // Initialize bot settings on page load
+      console.log("📋 Page loaded, initializing...");
+      console.log("📋 Session data from server:", {
+        id: "<%= session.id %>",
+        current_menu_id: "<%= session.current_menu_id %>",
+        status: "<%= session.status %>",
+      });
 
+      // Debug: Check if current_menu_id is available
+      const currentMenuIdFromServer = "<%= session.current_menu_id %>";
+      console.log(
+        "📋 Current Menu ID from server (raw):",
+        currentMenuIdFromServer
+      );
+      console.log(
+        "📋 Current Menu ID from server (type):",
+        typeof currentMenuIdFromServer
+      );
+      console.log(
+        "📋 Current Menu ID from server (length):",
+        currentMenuIdFromServer.length
+      );
+
+      // Check if current_menu_id is null or undefined
+      if (
+        currentMenuIdFromServer === "null" ||
+        currentMenuIdFromServer === "undefined" ||
+        currentMenuIdFromServer === ""
+      ) {
+        console.warn("⚠️ Current Menu ID is null, undefined, or empty!");
+      } else {
+        console.log("✅ Current Menu ID has a value:", currentMenuIdFromServer);
+      }
+
+      // Initialize all components
       loadBotSettings();
+      loadGroups();
+      loadBotLogic();
+
+      // Load current menu settings - simplified version using server-side data
+      function loadCurrentMenuSettings() {
+        console.log("📋 Loading current menu settings from server-side data...");
+        
+        // Data sudah tersedia dari server-side, tidak perlu API call
+        console.log("📋 Session menus from server:", <%= JSON.stringify(session.menus) %>);
+        console.log("📋 Current menu ID from server:", "<%= session.current_menu_id %>");
+        
+        // Update display dengan data dari server
+        const display = document.getElementById("currentMenuIdDisplay");
+        if (display) {
+          display.textContent = "<%= session.current_menu_id || 'None' %>";
+          console.log("📋 Display updated with server data");
+        }
+        
+        console.log("📋 Current menu settings loaded successfully!");
+      }
+
+      // Call the function immediately
+      console.log("📋 About to call loadCurrentMenuSettings...");
+      console.log("📋 Document ready state:", document.readyState);
+      
+      // Wait for DOM to be ready
+      if (document.readyState === 'loading') {
+        console.log("📋 DOM still loading, waiting for DOMContentLoaded...");
+        document.addEventListener('DOMContentLoaded', function() {
+          console.log("📋 DOMContentLoaded fired, calling loadCurrentMenuSettings...");
+          loadCurrentMenuSettings();
+        });
+      } else {
+        console.log("📋 DOM already ready, calling loadCurrentMenuSettings immediately...");
+        loadCurrentMenuSettings();
+      }
+      
+      console.log("📋 loadCurrentMenuSettings call initiated");
 
       // Toggle switch functionality
 
@@ -2100,7 +2355,7 @@
           // Don't auto-save, wait for manual save
         });
 
-      // Track changes and update save button appearance
+      // Track changes && update save button appearance
 
       let hasUnsavedChanges = false;
 
@@ -2201,73 +2456,45 @@
 
       document.addEventListener("DOMContentLoaded", function () {
         // Store original settings after loading
-
         setTimeout(() => {
           originalSettings = {
             enabled: document.getElementById("autoReplyToggle").checked,
-
             botType: document.getElementById("botTypeSelect").value,
-
             responses: {
               defaultResponse: document.getElementById("defaultResponse").value,
-
               greetingResponse:
                 document.getElementById("greetingResponse").value,
-
               infoResponse: document.getElementById("infoResponse").value,
-
               goodbyeResponse: document.getElementById("goodbyeResponse").value,
-
               errorResponse: document.getElementById("errorResponse").value,
             },
           };
 
-          // Update bot type display and feature status on initialization
+          // Update bot type display && feature status on initialization
           updateBotTypeDisplay(originalSettings.botType);
         }, 1000);
 
         // Add event listeners for change detection
-
         document
-
           .getElementById("autoReplyToggle")
-
           .addEventListener("change", checkForChanges);
-
         document
-
           .getElementById("defaultResponse")
-
           .addEventListener("input", checkForChanges);
-
         document
-
           .getElementById("greetingResponse")
-
           .addEventListener("input", checkForChanges);
-
         document
-
           .getElementById("infoResponse")
-
           .addEventListener("input", checkForChanges);
-
         document
-
           .getElementById("goodbyeResponse")
-
           .addEventListener("input", checkForChanges);
-
         document
-
           .getElementById("errorResponse")
-
           .addEventListener("input", checkForChanges);
-
         document
-
           .getElementById("botTypeSelect")
-
           .addEventListener("change", function () {
             checkForChanges();
             // Auto-load template when bot type changes
@@ -2276,6 +2503,190 @@
             }
           });
       });
+
+      // Current Menu Management Functions
+
+      async function loadCurrentMenuSettings() {
+        console.log("📋 Loading current menu settings...");
+
+        // Get current menu ID from tb_sessions (via server data)
+        const currentMenuId = "<%= session.current_menu_id %>";
+        console.log("📋 Current menu ID from tb_sessions:", currentMenuId);
+
+        // Get UI elements
+        const select = document.getElementById("currentMenuSelect");
+        const display = document.getElementById("currentMenuIdDisplay");
+
+        // Show loading state
+        select.innerHTML = '<option value="">Loading menus...</option>';
+        display.textContent = currentMenuId || "None";
+
+        try {
+          // Load dropdown options from tb_menu
+          console.log("📋 Loading dropdown options from tb_menu...");
+          const menusResponse = await fetch("/api/menus");
+          const menusData = await menusResponse.json();
+          console.log("📋 Menus from tb_menu:", menusData);
+
+          if (menusData.success && Array.isArray(menusData.menus)) {
+            // Clear && populate dropdown with tb_menu data
+            select.innerHTML = '<option value="">Select a menu...</option>';
+
+            menusData.menus.forEach((menu) => {
+              const option = document.createElement("option");
+              option.value = String(menu.id); // ID from tb_menu
+              option.textContent = `${menu.name} (ID: ${menu.id})`; // Name from tb_menu
+              select.appendChild(option);
+            });
+
+            // Set selected value from tb_sessions.current_menu_id
+            if (
+              currentMenuId &&
+              currentMenuId !== "null" &&
+              currentMenuId !== "undefined"
+            ) {
+              const currentMenuIdStr = String(currentMenuId);
+              select.value = currentMenuIdStr;
+              console.log(
+                "📋 Set dropdown value from tb_sessions.current_menu_id:",
+                currentMenuIdStr
+              );
+            } else {
+              console.log("📋 No current menu ID set in tb_sessions");
+            }
+          } else {
+            console.error("📋 Failed to load menus from tb_menu:", menusData);
+            select.innerHTML = '<option value="">No menus available</option>';
+
+            Swal.fire({
+              icon: "warning",
+              title: "No Menus Available",
+              text: "No menus found in tb_menu table. Please add some menus first.",
+              timer: 3000,
+              showConfirmButton: false,
+            });
+          }
+        } catch (error) {
+          console.error("Error loading menu settings:", error);
+
+          // Show error in UI
+          select.innerHTML = '<option value="">Error loading menus</option>';
+          display.textContent = "Error";
+
+          Swal.fire({
+            icon: "error",
+            title: "Error Loading Menu Settings",
+            text: "Failed to load menu settings: " + error.message,
+            timer: 5000,
+            showConfirmButton: false,
+          });
+        }
+      }
+
+      async function updateCurrentMenu() {
+        const sessionId = document.getElementById("sessionIdInput").value;
+        const selectedMenuId =
+          document.getElementById("currentMenuSelect").value;
+
+        if (!selectedMenuId) {
+          Swal.fire({
+            icon: "warning",
+            title: "No Menu Selected",
+            text: "Please select a menu first.",
+          });
+          return;
+        }
+
+        try {
+          const response = await fetch("/api/sessions/updateCurrentMenu", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              sessionId: sessionId,
+              currentMenuId: parseInt(selectedMenuId),
+            }),
+          });
+
+          const data = await response.json();
+
+          if (data.success) {
+            document.getElementById("currentMenuIdDisplay").textContent =
+              selectedMenuId;
+
+            Swal.fire({
+              icon: "success",
+              title: "Menu Updated",
+              text: `Current menu has been set to ID: ${selectedMenuId}`,
+              timer: 2000,
+              showConfirmButton: false,
+            });
+          } else {
+            throw new Error(data.error || "Failed to update menu");
+          }
+        } catch (error) {
+          console.error("Error updating current menu:", error);
+          Swal.fire({
+            icon: "error",
+            title: "Error",
+            text: "Failed to update current menu: " + error.message,
+          });
+        }
+      }
+
+      async function resetCurrentMenu() {
+        const sessionId = document.getElementById("sessionIdInput").value;
+
+        const confirm = await Swal.fire({
+          icon: "question",
+          title: "Reset Current Menu",
+          text: "Are you sure you want to reset the current menu? This will set it to null.",
+          showCancelButton: true,
+          confirmButtonText: "Reset",
+          confirmButtonColor: "#dc2626",
+        });
+
+        if (!confirm.isConfirmed) return;
+
+        try {
+          const response = await fetch("/api/sessions/updateCurrentMenu", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              sessionId: sessionId,
+              currentMenuId: null,
+            }),
+          });
+
+          const data = await response.json();
+
+          if (data.success) {
+            document.getElementById("currentMenuIdDisplay").textContent =
+              "None";
+            document.getElementById("currentMenuSelect").value = "";
+
+            Swal.fire({
+              icon: "success",
+              title: "Menu Reset",
+              text: "Current menu has been reset to null",
+              timer: 2000,
+              showConfirmButton: false,
+            });
+          } else {
+            throw new Error(data.error || "Failed to reset menu");
+          }
+        } catch (error) {
+          console.error("Error resetting current menu:", error);
+          Swal.fire({
+            icon: "error",
+            title: "Error",
+            text: "Failed to reset current menu: " + error.message,
+          });
+        }
+      }
 
       // Initialize toggle switch on page load
 
