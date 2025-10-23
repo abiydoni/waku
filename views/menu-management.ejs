@@ -417,9 +417,15 @@
       async function loadMenus() {
         try {
           const response = await fetch("/api/menus");
-          menus = await response.json();
-          renderMenuTable();
-          updateMenuSelects();
+          const data = await response.json();
+          if (data.success) {
+            menus = data.menus;
+            renderMenuTable();
+            updateMenuSelects();
+          } else {
+            console.error("Error loading menus:", data.error);
+            Swal.fire("Error", data.error || "Failed to load menus", "error");
+          }
         } catch (error) {
           console.error("Error loading menus:", error);
           Swal.fire("Error", "Failed to load menus", "error");
@@ -430,9 +436,19 @@
       async function loadBotMenus() {
         try {
           const response = await fetch("/api/botmenus");
-          botMenus = await response.json();
-          renderBotMenuTable();
-          updateBotMenuSelects();
+          const data = await response.json();
+          if (data.success) {
+            botMenus = data.botMenus;
+            renderBotMenuTable();
+            updateBotMenuSelects();
+          } else {
+            console.error("Error loading bot menus:", data.error);
+            Swal.fire(
+              "Error",
+              data.error || "Failed to load bot menus",
+              "error"
+            );
+          }
         } catch (error) {
           console.error("Error loading bot menus:", error);
           Swal.fire("Error", "Failed to load bot menus", "error");
@@ -525,11 +541,17 @@
       }
 
       // Update bot menu selects
-      function updateBotMenuSelects() {
+      function updateBotMenuSelects(selectedMenuId = null) {
         const botMenuParentId = document.getElementById("botMenuParentId");
+        const botMenuMenuId = document.getElementById("botMenuMenuId");
 
-        // Get main menus (parent_id is null)
-        const mainMenus = botMenus.filter((bm) => bm.parent_id === null);
+        // Get selected menu ID from dropdown or parameter
+        const menuId = selectedMenuId || botMenuMenuId.value;
+
+        // Get main menus (parent_id is null) for the selected menu_id
+        const mainMenus = botMenus.filter(
+          (bm) => bm.parent_id === null && bm.menu_id == menuId
+        );
 
         botMenuParentId.innerHTML =
           '<option value="">None (Main Menu)</option>';
@@ -583,9 +605,15 @@
           document.getElementById("botMenuDescription").value =
             botMenu.description;
           document.getElementById("botMenuUrl").value = botMenu.url || "";
+
+          // Update Parent ID dropdown based on selected Menu ID
+          updateBotMenuSelects(botMenu.menu_id);
         } else {
           title.textContent = "Add Bot Menu";
           form.reset();
+          // Clear Parent ID dropdown for new bot menu
+          document.getElementById("botMenuParentId").innerHTML =
+            '<option value="">None (Main Menu)</option>';
         }
 
         modal.classList.remove("hidden");
@@ -786,6 +814,13 @@
               row.style.display = "none";
             }
           });
+        });
+
+      // Event listener for Menu ID dropdown change
+      document
+        .getElementById("botMenuMenuId")
+        .addEventListener("change", function () {
+          updateBotMenuSelects();
         });
 
       // Refresh data

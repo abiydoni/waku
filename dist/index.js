@@ -29,35 +29,6 @@ async function initializeDatabase() {
   console.log("✅ Global database handler initialized");
 }
 
-// Helper function untuk menyimpan session ke database
-async function saveSessionToDatabase(sessionId, sessionData) {
-  try {
-    // Extract number from sessionId jika masih menggunakan format lama
-    let cleanSessionId = sessionId;
-    if (sessionId.startsWith("auth_info_session")) {
-      cleanSessionId = sessionId.replace("auth_info_session", "");
-    }
-
-    const sessionInfo = {
-      session_id: cleanSessionId,
-      session_name: sessionData.session_name || `Session ${cleanSessionId}`,
-      status: sessionData.status || "disconnected",
-      phone_number: sessionData.phone_number || null,
-      qr_code: sessionData.qr || null,
-      current_menu_id: sessionData.current_menu_id || null,
-      user_context: sessionData.user_context || null,
-      bot_enabled: sessionData.bot_enabled !== false ? 1 : 0,
-      auto_reply_enabled: sessionData.auto_reply_enabled !== false ? 1 : 0,
-      group_reply_enabled: sessionData.group_reply_enabled ? 1 : 0,
-    };
-
-    await dbHandler.saveSession(sessionInfo);
-    console.log(`💾 Session saved to database: ${cleanSessionId}`);
-  } catch (error) {
-    console.error(`❌ Error saving session to database:`, error.message);
-  }
-}
-
 // Middleware
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -911,6 +882,9 @@ function loadSessions() {
 }
 loadSessions();
 
+// Sync sessions to database on startup
+// Wait 2 seconds for database to be ready
+
 // --- Initialize session + bot ---
 async function initSession(sessionId) {
   console.log(`🔄 Initializing session: ${sessionId}`);
@@ -1050,9 +1024,6 @@ async function initSession(sessionId) {
         sessions[sessionId].heartbeatFailures = 0; // Reset heartbeat failures
         sessions[sessionId].lastHeartbeat = Date.now(); // Set initial heartbeat time
 
-        // Save session status to database
-        await saveSessionToDatabase(sessionId, sessions[sessionId]);
-
         try {
           console.log(`📋 Fetching groups for session ${sessionId}...`);
           const groups = await sock.groupFetchAllParticipating();
@@ -1106,9 +1077,6 @@ async function initSession(sessionId) {
         sessions[sessionId].status = "disconnected";
         sessions[sessionId].qr = null;
         console.log(`❌ Session ${sessionId} disconnected`);
-
-        // Save session status to database
-        await saveSessionToDatabase(sessionId, sessions[sessionId]);
 
         // Check disconnect reason
         const disconnectCode = lastDisconnect?.error?.output?.statusCode;
@@ -1750,35 +1718,10 @@ app.get("/dashboard", requireAuth, (req, res) => {
   });
 });
 
-// Route: Tables page
-app.get("/tables", requireAuth, (req, res) => {
-  const username = req.cookies?.username || "Admin";
-  res.render("tables", { username });
-});
-
 // Session detail page (with auth)
 app.get("/session/:id", requireAuth, async (req, res) => {
   const { id } = req.params;
   console.log(`📋 Rendering session page for: ${id}`);
-
-  // Get session from database
-  const dbSession = dbHandler.getSession(id);
-  if (!dbSession) {
-    console.log(`📋 Session ${id} not found in database`);
-    return res.status(404).send("Session not found in database");
-  }
-
-  console.log(`📋 Database session data:`, dbSession);
-  console.log(`📋 Current menu ID from database:`, dbSession.current_menu_id);
-  console.log(`📋 Current menu ID type:`, typeof dbSession.current_menu_id);
-  console.log(
-    `📋 Current menu ID is null:`,
-    dbSession.current_menu_id === null
-  );
-  console.log(
-    `📋 Current menu ID is undefined:`,
-    dbSession.current_menu_id === undefined
-  );
 
   // Get session from memory (for groups and status)
   const s = sessions[id];
@@ -1839,23 +1782,12 @@ app.get("/session/:id", requireAuth, async (req, res) => {
     status: sessions[id] ? sessions[id].status : "disconnected",
     groups: groups,
     hasSock: sessions[id] ? !!sessions[id].sock : false,
-    // Add database fields
-    current_menu_id: dbSession.current_menu_id,
-    session_name: dbSession.session_name,
-    phone_number: dbSession.phone_number,
-    bot_enabled: dbSession.bot_enabled,
-    auto_reply_enabled: dbSession.auto_reply_enabled,
-    group_reply_enabled: dbSession.group_reply_enabled,
     // Add menus for dropdown
     menus: menus,
   };
 
   console.log(`📋 Final session detail:`, detail);
   console.log(`📋 Menus data being sent to template:`, detail.menus);
-  console.log(
-    `📋 Current menu ID being sent to template:`,
-    detail.current_menu_id
-  );
 
   const username = req.cookies?.username || "Admin";
 
@@ -1885,9 +1817,6 @@ app.post("/api/connect", async (req, res) => {
       reconnecting: false,
       reconnectAttempts: 0,
     };
-
-    // Save session to database
-    await saveSessionToDatabase(sessionId, sessions[sessionId]);
 
     // Initialize bot settings for new session
     if (!botSettings[sessionId]) {
@@ -2168,14 +2097,21 @@ app.get("/api/botHealth/:sessionId", (req, res) => {
   });
 });
 
+// Helper function to sync sessions from memory to database
+
 // API: getSessions
-app.get("/api/getSessions", (req, res) => {
-  const sessArray = Object.keys(sessions).map((id) => ({
-    id,
-    status: sessions[id].status,
-    groups: sessions[id].groups,
-  }));
-  res.json({ sessions: sessArray });
+app.get("/api/getSessions", async (req, res) => {
+  try {
+    const sessArray = Object.keys(sessions).map((id) => ({
+      id,
+      status: sessions[id].status,
+      groups: sessions[id].groups,
+    }));
+    res.json({ sessions: sessArray });
+  } catch (error) {
+    console.error("Error in getSessions API:", error.message);
+    res.json({ sessions: [], error: error.message });
+  }
 });
 
 // API: Test bot settings
@@ -2774,17 +2710,6 @@ app.delete("/api/users/:id", async (req, res) => {
 
 // ===== SESSION MANAGEMENT APIs =====
 
-// API: Get all sessions
-app.get("/api/sessions", async (req, res) => {
-  try {
-    const sessions = dbHandler.getAllSessions();
-    res.json({ success: true, data: sessions });
-  } catch (error) {
-    console.error("Error getting sessions:", error.message);
-    res.json({ error: error.message });
-  }
-});
-
 // API: Get specific session
 
 // API: Get session status (real-time)
@@ -2819,40 +2744,6 @@ app.get("/api/sessions/:sessionId/status", async (req, res) => {
     });
   } catch (error) {
     console.error("Error getting session status:", error.message);
-    res.json({ error: error.message });
-  }
-});
-
-// API: Get all settings (for tables page)
-app.get("/api/settings/all", async (req, res) => {
-  try {
-    const allSessions = dbHandler.getAllSessions();
-    let allSettings = [];
-
-    // Clean up orphaned sessions (sessions without settings)
-    const sessionsWithSettings = [];
-    for (const session of allSessions) {
-      const settings = dbHandler.getAllSettings(session.session_id);
-      if (settings.length > 0) {
-        sessionsWithSettings.push(session);
-        // Only include settings that have valid session_id
-        const validSettings = settings.filter(
-          (setting) => setting.session_id === session.session_id
-        );
-        allSettings = allSettings.concat(validSettings);
-      } else {
-        // Remove orphaned session
-        console.log(`🧹 Removing orphaned session: ${session.session_id}`);
-        dbHandler.deleteSession(session.session_id);
-      }
-    }
-
-    console.log(
-      `📊 Returning ${allSettings.length} settings for ${sessionsWithSettings.length} sessions`
-    );
-    res.json({ success: true, data: allSettings });
-  } catch (error) {
-    console.error("Error getting all settings:", error.message);
     res.json({ error: error.message });
   }
 });
@@ -2911,185 +2802,6 @@ app.get("/api/sessions/:sessionId", async (req, res) => {
   } catch (error) {
     console.error("Error getting session:", error.message);
     res.json({ success: false, error: error.message });
-  }
-});
-
-// API endpoint untuk mengupdate current_menu_id
-app.post("/api/sessions/updateCurrentMenu", async (req, res) => {
-  try {
-    const { sessionId, currentMenuId } = req.body;
-
-    if (!sessionId) {
-      return res.json({ success: false, error: "Session ID is required" });
-    }
-
-    // Validate session exists
-    const session = dbHandler.getSession(sessionId);
-    if (!session) {
-      return res.json({ success: false, error: "Session not found" });
-    }
-
-    // Update current_menu_id
-    const success = dbHandler.updateCurrentMenu(sessionId, currentMenuId);
-
-    if (success) {
-      console.log(
-        `📋 Updated current_menu_id for session ${sessionId} to: ${currentMenuId}`
-      );
-      res.json({ success: true, message: "Current menu updated successfully" });
-    } else {
-      res.json({ success: false, error: "Failed to update current menu" });
-    }
-  } catch (error) {
-    console.error("Error updating current menu:", error.message);
-    res.json({ success: false, error: error.message });
-  }
-});
-
-// API: Save/Update session
-app.post("/api/sessions", async (req, res) => {
-  try {
-    const sessionData = req.body;
-
-    // Validate session data
-    if (!sessionData.session_id) {
-      return res.status(400).json({ error: "Session ID is required" });
-    }
-
-    // Check if session has settings before saving
-    const existingSettings = dbHandler.getAllSettings(sessionData.session_id);
-    if (existingSettings.length === 0) {
-      console.log(
-        `⚠️ Session ${sessionData.session_id} has no settings, skipping save`
-      );
-      return res.json({
-        success: false,
-        message: "Session has no settings, not saved",
-        skipped: true,
-      });
-    }
-
-    const result = await dbHandler.saveSession(sessionData);
-
-    if (result) {
-      res.json({ success: true, message: "Session saved successfully" });
-    } else {
-      res.json({ error: "Failed to save session" });
-    }
-  } catch (error) {
-    console.error("Error saving session:", error.message);
-    res.json({ error: error.message });
-  }
-});
-
-// API: Update session status
-app.put("/api/sessions/:sessionId/status", async (req, res) => {
-  try {
-    const { sessionId } = req.params;
-    const { status } = req.body;
-
-    const result = dbHandler.updateSessionStatus(sessionId, status);
-
-    if (result) {
-      res.json({ success: true, message: "Session status updated" });
-    } else {
-      res.json({ error: "Failed to update session status" });
-    }
-  } catch (error) {
-    console.error("Error updating session status:", error.message);
-    res.json({ error: error.message });
-  }
-});
-
-// API: Update current menu
-app.put("/api/sessions/:sessionId/menu", async (req, res) => {
-  try {
-    const { sessionId } = req.params;
-    const { menuId } = req.body;
-
-    const result = dbHandler.updateCurrentMenu(sessionId, menuId);
-
-    if (result) {
-      res.json({ success: true, message: "Current menu updated" });
-    } else {
-      res.json({ error: "Failed to update current menu" });
-    }
-  } catch (error) {
-    console.error("Error updating current menu:", error.message);
-    res.json({ error: error.message });
-  }
-});
-
-// ===== BOT SETTINGS APIs =====
-
-// API: Get all settings for a session
-app.get("/api/sessions/:sessionId/settings", async (req, res) => {
-  try {
-    const { sessionId } = req.params;
-    const settings = dbHandler.getAllSettings(sessionId);
-    res.json({ success: true, data: settings });
-  } catch (error) {
-    console.error("Error getting settings:", error.message);
-    res.json({ error: error.message });
-  }
-});
-
-// API: Get specific setting
-app.get("/api/sessions/:sessionId/settings/:key", async (req, res) => {
-  try {
-    const { sessionId, key } = req.params;
-    const setting = dbHandler.getSetting(sessionId, key);
-
-    if (!setting) {
-      return res.json({ error: "Setting not found" });
-    }
-
-    res.json({ success: true, data: setting });
-  } catch (error) {
-    console.error("Error getting setting:", error.message);
-    res.json({ error: error.message });
-  }
-});
-
-// API: Save/Update setting
-app.post("/api/sessions/:sessionId/settings", async (req, res) => {
-  try {
-    const { sessionId } = req.params;
-    const { key, value, type = "string", description = "" } = req.body;
-
-    const result = await dbHandler.saveSetting(
-      sessionId,
-      key,
-      value,
-      type,
-      description
-    );
-
-    if (result) {
-      res.json({ success: true, message: "Setting saved successfully" });
-    } else {
-      res.json({ error: "Failed to save setting" });
-    }
-  } catch (error) {
-    console.error("Error saving setting:", error.message);
-    res.json({ error: error.message });
-  }
-});
-
-// API: Delete setting
-app.delete("/api/sessions/:sessionId/settings/:key", async (req, res) => {
-  try {
-    const { sessionId, key } = req.params;
-    const result = dbHandler.deleteSetting(sessionId, key);
-
-    if (result) {
-      res.json({ success: true, message: "Setting deleted successfully" });
-    } else {
-      res.json({ error: "Failed to delete setting" });
-    }
-  } catch (error) {
-    console.error("Error deleting setting:", error.message);
-    res.json({ error: error.message });
   }
 });
 
@@ -3443,7 +3155,7 @@ app.get("/api/botmenus", async (req, res) => {
       )
       .all();
 
-    res.json(botmenus);
+    res.json({ success: true, botMenus: botmenus });
   } catch (error) {
     console.error("Error fetching bot menus:", error);
     res.status(500).json({ error: "Failed to fetch bot menus" });
